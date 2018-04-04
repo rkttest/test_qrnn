@@ -35,13 +35,13 @@ def main():
     attn_model = 'general'
     hidden_size = 512
     n_layers = 2
-    dropout_p = 0.2
+    dropout_p = 0.05
     n_words = 55000
     batch_size = 20
     n_epochs = 1000
     plot_every = 10
     print_every = 1
-    learning_rate = 1e-4
+    learning_rate = 0.01
     
     ### ネットワークの定義
     encoder = Encoder(dict_size=n_words,
@@ -60,10 +60,6 @@ def main():
     if USE_CUDA:
         encoder.cuda()
         decoder.cuda()
-    encoder_optimizer = optim.Adam(encoder.parameters(),
-                                   lr=learning_rate)
-    decoder_optimizer = optim.Adam(decoder.parameters(),
-                                   lr=learning_rate)
     
     criterion = nn.NLLLoss()
 
@@ -74,6 +70,13 @@ def main():
     ### 学習開始
     for epoch in range(init_epoch, n_epochs + 1):
         print("epoch :", epoch)
+        learning_rate = learning_rate * 0.5 #1 epoch ごとに 0.5 倍していく
+        encoder_optimizer = optim.Adam(encoder.parameters(),
+                                       lr=learning_rate)
+        decoder_optimizer = optim.Adam(decoder.parameters(),
+                                       lr=learning_rate)
+
+        
         ### バッチデータごとに処理
         for batch_idx in range(train_size // batch_size):
             if DEBUG: print(batch_idx)
@@ -106,8 +109,8 @@ def main():
                 print_loss_total = 0
         
             if (epoch % 1 == 0) and (batch_idx % 1000 == 0):
-                torch.save(encoder.state_dict(), "SavedModel/encoder_{}_{}".format(epoch, batch_idx))
-                torch.save(decoder.state_dict(), "SavedModel/decoder_{}_{}".format(epoch, batch_idx))
+                torch.save(encoder.state_dict(), "SavedModel/3/encoder_{}_{}".format(epoch, batch_idx))
+                torch.save(decoder.state_dict(), "SavedModel/3/decoder_{}_{}".format(epoch, batch_idx))
 
 
 def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=50):

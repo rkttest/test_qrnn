@@ -29,8 +29,8 @@ def main():
     dropout_p = 0.1
     n_words = 55000
     
-    en_path = "SavedModel/encoder_8_0"
-    de_path = "SavedModel/decoder_8_0"
+    en_path = "SavedModel/2/encoder_10_1000"
+    de_path = "SavedModel/2/decoder_10_1000"
     encoder_param = torch.load(en_path)
     decoder_param = torch.load(de_path)
 

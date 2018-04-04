@@ -39,7 +39,7 @@ def main():
     attn_model = 'general'
     hidden_size = 512
     n_layers = 2
-    dropout_p = 0.2
+    dropout_p = 0
     n_words = 55000
     batch_size = 20
     plot_every = 10
@@ -75,11 +75,11 @@ def main():
     ###
 
     init_epoch = 1
-    n_epochs = 7
+    n_epochs = 20
     n_batch = 10
-    base_dir = "SavedModel/"
+    base_dir = "SavedModel/3/"
     
-    for epoch in range(init_epoch, n_epochs):
+    for epoch in range(init_epoch, n_epochs+1):
 
         ### バッチデータごとに処理
         for batch in range(n_batch):
@@ -112,12 +112,12 @@ def main():
     mean_loss_arr = np.array(mean_loss_list)
 
 
-    plt.plot(np.arange(len(mean_loss_list))/n_batch, mean_loss_arr)
+    plt.plot((np.arange(len(mean_loss_list))/n_batch)[1:], mean_loss_arr[1:])
     plt.savefig("nmll_graph.png")
     plt.close()
 
     print("minimul loss:", np.min(mean_loss_arr))
-    print("minimul model:{}epoch + {}data".format(*index_list(np.argmin(mean_loss_arr))))
+    print("minimul model:{}epoch + {}data".format(*index_list[np.argmin(mean_loss_arr)]))
         
 def train(input_variable, target_variable, encoder, decoder, max_length=50):
     teacher_forcing_ratio = 10.5
