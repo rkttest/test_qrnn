@@ -37,11 +37,11 @@ def main():
     ### ハイパーパラメータの定義
     print("train size", train_pair.shape)
     attn_model = 'general'
-    hidden_size = 512
+    hidden_size = 500
     n_layers = 2
     dropout_p = 0
-    n_words = 55000
-    batch_size = 20
+    n_words = 54000
+    batch_size = 4
     plot_every = 10
     print_every = 1
     learning_rate = 1e-4
@@ -75,9 +75,9 @@ def main():
     ###
 
     init_epoch = 1
-    n_epochs = 20
-    n_batch = 10
-    base_dir = "SavedModel/3/"
+    n_epochs = 7
+    n_batch = 12
+    base_dir = "SavedModel/5/"
     
     for epoch in range(init_epoch, n_epochs+1):
 

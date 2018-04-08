@@ -50,7 +50,7 @@ class QRNN(nn.Module):
         self.conv1 = nn.Conv1d(hidden_size, hidden_size*3, kernel_size) #B * C * L -> B * C_out * L_out
         self.fopooling = FOPooling(dropout_p=dropout_p)
         
-    def forward(self, x, init_h, init_c, target=None):
+    def forward(self, x, init_h, init_c):
         # x = N * B * H
             
         for _ in range(self.n_layers):
@@ -74,17 +74,30 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.softmax = nn.functional.softmax
         
-    def forward(self, input_encode, target_encode):
+    def forward(self, input_encode, target_encode, mask=None):
         #input_encode = N * B * H
         #target_encode = M * B * H
         #matrix = B * M * N
         #attn = B * M * N
+        #mask = B * M * N
         input_encode = input_encode.transpose(0, 1).transpose(1, 2)
         target_encode = target_encode.transpose(0, 1)
+        #tmp = torch.cat([input_encode, target_encode], dim=2)
         matrix = torch.bmm(target_encode, input_encode)
-        attn = self.softmax(matrix, dim=2)
+        matrix -= matrix.mean(dim=2).unsqueeze(2)
+        matrix = (matrix ** 2).sqrt()
+        if mask is not None:
+            #print(mask.size(), matrix.size())
+            matrix.data.masked_fill_(mask, -float("Inf"))
+            #print(matrix.data[0])
+        attn = self.softmax(matrix, dim=2).detach()
+        #print(attn.data[0])
         return attn
 
+    def score(in_vect, tar_vect):
+        pass
+
+    
 def main():
     #入力データは 20data * 50wordlen * 60dictsize * 64hiddensize
     X = np.stack([np.arange(50) for _ in range(20)])

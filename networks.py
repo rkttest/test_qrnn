@@ -5,6 +5,7 @@ from torch import nn
 from torch.autograd import Variable
 from qrnn import QRNN, Attention
 USE_CUDA=True
+
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64,
                  n_layers=1, dropout_p=0.2, kernel_size=1):
@@ -19,20 +20,26 @@ class Decoder(nn.Module):
         self.attention = Attention()
         
     def forward(self, x, h_prev, c_prev, target=None,
-                encoder_out=None):
+                encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
         # target is not None -> attention
         x = self.embed(x).transpose(0, 1) #x = M * B * H
         h_out, c_out = self.qrnn(x, h_prev, c_prev)
+
         #このあと attention を加える
         if target is not None:
             target = self.embed(target).transpose(0, 1)
             target_h_out, target_c_out = self.qrnn(target, h_prev,
                                                    c_prev)
-            attn = self.attention(encoder_out, target_h_out)
+            attn = self.attention(encoder_out, target_h_out, mask)
+            #print(encoder_out.data[:,0, 0], "before atten")
             encoder_out = torch.bmm(attn,
                                     encoder_out.transpose(0, 1)).transpose(0, 1)
+            #print(encoder_out.data[:,0, 0], "after atten")
+            #print(attn.size(), attn.data[0, :, -10:])
+            #print(h_out.data[:,0,0], "hout")
             h_out += encoder_out
+            #print(h_out.data[:,0, 0], "hout atten")       
 
         h_out, c_out = self.qrnn(x, h_out[0], c_out[-1])
         probs = self.linear(h_out[-1])

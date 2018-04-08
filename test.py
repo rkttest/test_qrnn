@@ -17,20 +17,21 @@ from networks import Encoder, Decoder, USE_CUDA
 MAX_LENGTH = 50
 DEBUG=False
 def main():
-    test_path = "../../TrainData/sample.npy"
+    test_path = "../../TrainData/test.npy"
     test_data = np.load(test_path)
     test_pairs = test_data.reshape(-1, 2, test_data.shape[1])
     dictpath = "../../Dictionary/datum/reshape_dict.csv"
+    #dictpath = "../../Dictionary/datum/corpus_reshape_dict.csv"
     dictionary = simpleWordDict(dictpath)
     
     attn_model = 'general'
-    hidden_size = 512
+    hidden_size = 500
     n_layers = 2
-    dropout_p = 0.1
-    n_words = 55000
+    dropout_p = 0.05
+    n_words = 54000 #6600 #54000
     
-    en_path = "SavedModel/2/encoder_10_1000"
-    de_path = "SavedModel/2/decoder_10_1000"
+    en_path = "SavedModel/7/encoder_7_2000"
+    de_path = "SavedModel/7/decoder_7_2000"
     encoder_param = torch.load(en_path)
     decoder_param = torch.load(de_path)
 
@@ -49,11 +50,14 @@ def main():
         encoder.cuda()
         decoder.cuda()
         
-    test_num = 20
-    random.seed(0)
+    test_num = 60
+    random.seed(1)
     for i in range(test_num):
         test_pair = random.choice(test_pairs)
-        input_variable = Variable(torch.LongTensor(test_pair[0].reshape(1, -1)))
+        input_test_pair = test_pair[0].reshape(1, -1)
+        input_test_pair = input_test_pair[:,::-1].copy()
+
+        input_variable = Variable(torch.LongTensor(input_test_pair))
        
         output_words = evaluate(dictionary,
                                 input_variable,
@@ -77,7 +81,9 @@ def evaluate(dictionary, input_variable, encoder, decoder,
     input_length = input_variable.size()[0]
     if USE_CUDA:
         input_variable = input_variable.cuda()
-        
+    mask = torch.stack([input_variable == 0 for _ in range(max_length)], dim=1).data
+    if USE_CUDA:
+        mask = mask.cuda()
     # Run through encoder
     encoder_hidden = encoder.init_hidden()
     encoder_c = encoder.init_hidden()
@@ -90,7 +96,7 @@ def evaluate(dictionary, input_variable, encoder, decoder,
     decoded_words = []
     decoder_outs = [SOS_token]
     decoder_attentions = torch.zeros(max_length, max_length)
-
+    
     # Run through decoder
     for di in range(max_length-1):
         decoder_input = Variable(torch.LongTensor([decoder_outs]))
@@ -101,7 +107,7 @@ def evaluate(dictionary, input_variable, encoder, decoder,
             print("decoder_hidden ", decoder_hidden.size())
             print(decoder_input.size())
 
-        decoder_output, decoder_hidden, decoder_c, decoder_attention = decoder(decoder_input, decoder_hidden, decoder_c, target=decoder_input, encoder_out=encoder_hidden)
+        decoder_output, decoder_hidden, decoder_c, decoder_attention = decoder(decoder_input, decoder_hidden, decoder_c, target=decoder_input, encoder_out=encoder_hidden, mask=mask[:,:di+1])
         
         # Choose top word from output
         topv, topi = decoder_output.data.topk(1)
@@ -109,6 +115,9 @@ def evaluate(dictionary, input_variable, encoder, decoder,
         decoder_c = decoder_c[-1]
         if DEBUG: print(topi.size(), topi)
         ni = topi[0][0]
+
+        #print(decoder_attention.data[0])
+        
         if ni == EOS_token or ni == PAD_token:
             decoded_words.append('<EOS>')
             break

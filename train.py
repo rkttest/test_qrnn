@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch import optim
 import torch.nn.functional as F
+from optim.adam import Adam
 import random
 import numpy as np
 import time
@@ -25,37 +26,43 @@ def main():
     train_pair = train_data.reshape(-1, 2, train_data.shape[1])
     train_size = train_pair.shape[0]
     np.random.seed(1)
-    shuffle_arr = np.arange(train_size)
-    np.random.shuffle(shuffle_arr)
-    train_pair = train_pair[shuffle_arr]
+    #shuffle_arr = np.arange(train_size)
+    #np.random.shuffle(shuffle_arr)
+    #train_pair = train_pair[shuffle_arr]
+    #train_probs = (train_pair[:,1] > 0).sum(axis=1)
+    #smoothing = 4
+    train_probs = np.load("../../TrainData/weight.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
+    train_probs = train_probs.reshape(-1, 2)[:, 1]
+    train_probs = train_probs / train_probs.sum()
     ### ここまでを別の処理で行う
 
     ### ハイパーパラメータの定義
     print("train size", train_pair.shape)
     attn_model = 'general'
-    hidden_size = 512
+    hidden_size = 500
     n_layers = 2
-    dropout_p = 0.05
-    n_words = 55000
-    batch_size = 20
-    n_epochs = 1000
+    dropout_p = 0.2
+    n_words = 54000 #6600 #54000
+    batch_size = 15 #40 #15
+    n_epochs = 15
     plot_every = 10
     print_every = 1
-    learning_rate = 0.01
-    
+    learning_rate = 0.005
+    l2 = 0.0002
+    outpath = "SavedModel/7"
     ### ネットワークの定義
     encoder = Encoder(dict_size=n_words,
                          hidden_size=hidden_size,
-                         n_layers=n_layers, batch_size=batch_size)                         
+                         n_layers=n_layers, batch_size=batch_size)
     decoder = Decoder(dict_size=n_words,
                       hidden_size=hidden_size,
                       n_layers=n_layers)
-    if not os.path.exists("SavedModel"):
-        os.mkdir("SavedModel")
-    # encoder_param = torch.load("SavedModel/1/encoder_5_0")
-    # decoder_param = torch.load("SavedModel/1/decoder_5_0")
-    # encoder.load_state_dict(encoder_param)
-    # decoder.load_state_dict(decoder_param)
+    if not os.path.exists(outpath):
+        os.mkdir(outpath)
+    encoder_param = torch.load("SavedModel/7/encoder_1_4000")
+    decoder_param = torch.load("SavedModel/7/decoder_1_4000")
+    encoder.load_state_dict(encoder_param)
+    decoder.load_state_dict(decoder_param)
     init_epoch = 1
     if USE_CUDA:
         encoder.cuda()
@@ -70,17 +77,21 @@ def main():
     ### 学習開始
     for epoch in range(init_epoch, n_epochs + 1):
         print("epoch :", epoch)
-        learning_rate = learning_rate * 0.5 #1 epoch ごとに 0.5 倍していく
-        encoder_optimizer = optim.Adam(encoder.parameters(),
-                                       lr=learning_rate)
-        decoder_optimizer = optim.Adam(decoder.parameters(),
-                                       lr=learning_rate)
+        if epoch % 3 == 0:
+            learning_rate = learning_rate * 0.3 #1 epoch ごとに 0.5 倍していく
+        encoder_optimizer = Adam(encoder.parameters(),
+                                       lr=learning_rate, amsgrad=True, weight_decay=l2)
+        decoder_optimizer = Adam(decoder.parameters(),
+                                       lr=learning_rate, amsgrad=True, weight_decay=l2)
 
         
         ### バッチデータごとに処理
+        plot_loss_total = 0
         for batch_idx in range(train_size // batch_size):
             if DEBUG: print(batch_idx)
-            training_pair = train_pair[batch_idx*batch_size:(batch_idx+1)*batch_size]
+            batches = np.random.choice(np.arange(train_size), batch_size, p=train_probs)
+            training_pair = train_pair[batches]
+            training_pair[:,0] = training_pair[:,0,::-1] 
             input_variable = Variable(torch.LongTensor(training_pair[:,0]))
             target_variable = Variable(torch.LongTensor(training_pair[:,1]))
 
@@ -89,7 +100,7 @@ def main():
                 target_variable = target_variable.cuda()
                 
             # Run the train function
-            loss = train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+            loss = train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, teacher_forcing_ratio=0.8)
 
             if DEBUG:
                 print("loss :", loss)
@@ -100,7 +111,7 @@ def main():
             
             if (batch_idx + 1)% print_every == 0:
                 print_loss_avg = print_loss_total / print_every
-                print_loss_total = plot_loss_total
+                print_loss_total = plot_loss_total / ((batch_idx + 1) * print_every)
                 end = time.time()
                 print("batch idx : {}/{}".format(batch_idx, train_size // batch_size))
                 print("time :", end-start)
@@ -109,12 +120,12 @@ def main():
                 print_loss_total = 0
         
             if (epoch % 1 == 0) and (batch_idx % 1000 == 0):
-                torch.save(encoder.state_dict(), "SavedModel/3/encoder_{}_{}".format(epoch, batch_idx))
-                torch.save(decoder.state_dict(), "SavedModel/3/decoder_{}_{}".format(epoch, batch_idx))
+                torch.save(encoder.state_dict(), "{}/encoder_{}_{}".format(outpath, epoch, batch_idx))
+                torch.save(decoder.state_dict(), "{}/decoder_{}_{}".format(outpath, epoch, batch_idx))
 
 
-def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=50):
-    teacher_forcing_ratio = 10.5
+def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=50, teacher_forcing_ratio=0.5):
+
     clip = 4.0
     
     # Zero gradients of both optimizers
@@ -142,25 +153,33 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
     weight = (target_variable != PAD_token).data
     weight = weight.cpu().numpy() # weight = B * M
 
+    # Generate attention mask
+    mask = torch.stack([input_variable == 0 for _ in range(target_length)], dim=1).data
+
     if USE_CUDA:
         decoder_input = decoder_input.cuda()
         decoder_c = decoder_c.cuda()
+        mask = mask.cuda()
         
-        # Choose whether to use teacher forcing
+    # Choose whether to use teacher forcing
     use_teacher_forcing = random.random() < teacher_forcing_ratio
     if DEBUG: print("esize", encoder_hidden.size())
 
     #if use_teacher_forcing:
         # Teacher forcing: Use the ground-truth target as the next input
         # decoder input = target variable
-        
+
+    decoder_outlist = [torch.LongTensor([SOS_token]*batch_size)]
+    if USE_CUDA:decoder_outlist = [torch.cuda.LongTensor([[SOS_token]]*batch_size)]
+    random_val = np.random.rand()
     for di in range(target_length-1):
         if DEBUG: print("di", di)
         decoder_output, _, _, _ = decoder(decoder_input, 
                                           decoder_hidden,
                                           decoder_c,
                                           target=target_variable[:,:di+1],
-                                          encoder_out=encoder_hidden)
+                                          encoder_out=encoder_hidden,
+                                          mask=mask[:,:di+1,:])
         #decoder_output = B * Dict
         index = np.where(weight[:, di+1])[0]
         if len(index) == 0:
@@ -168,36 +187,16 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
         index = torch.from_numpy(index)
         if USE_CUDA: index = index.cuda()
         loss += nn.CrossEntropyLoss()(decoder_output[index],target_variable[index][:, di+1])
+        topv, topi = decoder_output.data.topk(1)
+        decoder_outlist.append(topi)
 
-        decoder_input = target_variable[:,:di+2] # Next target is next input
+        if random_val < teacher_forcing_ratio:
+            decoder_input = target_variable[:,:di+2] # Next target is next input
+        else:
+            #print(decoder_outlist)
+            decoder_input = Variable(torch.cat(decoder_outlist, dim=1))
+            if USE_CUDA: decoder_input = decoder_input.cuda()
 
-    # if use_teacher_forcing:
-    #     pass
-    # else:
-    #     # Without teacher forcing: use network's own prediction as the next input
-    #     for di in range(target_length-1):
-    #         if DEBUG: print("di", di)
-
-    #         decoder_output, _, _, _ = decoder(decoder_input, 
-    #                                           decoder_hidden,
-    #                                           decoder_c,
-    #                                           target=target_variable[:,:di+1],
-    #                                           encoder_out=encoder_hidden)
-    #         index = np.where(weight[di+1])[0]
-    #         if len(index) == 0:
-    #             break
-    #         index = torch.from_numpy(index)
-    #         if USE_CUDA: index = index.cuda()
-    #         loss += nn.CrossEntropyLoss()(decoder_output[index],
-    #                           target_variable[di+1][index])
-
-    #         # Get most likely word index (highest value) from output
-    #         topv, topi = decoder_output.data.topk(1)
-    #         decoder_input = Variable(topi) #.unsqueeze(1) #Variable(torch.LongTensor([[ni]])) # Chosen word is next input
-    #         if USE_CUDA: decoder_input = decoder_input.cuda()
-            
-    #         # Stop at end of sentence (not necessary when using known targets)
-    #         if (topi == EOS_token).max(): break
             
     # Backpropagation
     if DEBUG: print("Start BackWard")
