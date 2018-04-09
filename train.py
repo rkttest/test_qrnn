@@ -21,7 +21,7 @@ DEBUG = False
 
 def main():
     ### データの読み込み
-    train_path = "../../TrainData/train.npy"
+    train_path = "../../TrainData/corpus_train.npy"
     train_data = np.load(train_path)
     train_pair = train_data.reshape(-1, 2, train_data.shape[1])
     train_size = train_pair.shape[0]
@@ -31,14 +31,15 @@ def main():
     #train_pair = train_pair[shuffle_arr]
     #train_probs = (train_pair[:,1] > 0).sum(axis=1)
     #smoothing = 4
-    train_probs = np.load("../../TrainData/weight.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
+    #train_probs = np.load("../../TrainData/weight.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
+    train_probs = np.ones(train_size)
     train_probs = train_probs.reshape(-1, 2)[:, 1]
     train_probs = train_probs / train_probs.sum()
     ### ここまでを別の処理で行う
 
     ### ハイパーパラメータの定義
     print("train size", train_pair.shape)
-    attn_model = 'general'
+    #attn_model = 'general'
     hidden_size = 500
     n_layers = 2
     dropout_p = 0.2
@@ -59,10 +60,10 @@ def main():
                       n_layers=n_layers)
     if not os.path.exists(outpath):
         os.mkdir(outpath)
-    encoder_param = torch.load("SavedModel/7/encoder_1_4000")
-    decoder_param = torch.load("SavedModel/7/decoder_1_4000")
-    encoder.load_state_dict(encoder_param)
-    decoder.load_state_dict(decoder_param)
+    #encoder_param = torch.load("SavedModel/7/encoder_1_4000")
+    #decoder_param = torch.load("SavedModel/7/decoder_1_4000")
+    #encoder.load_state_dict(encoder_param)
+    #decoder.load_state_dict(decoder_param)
     init_epoch = 1
     if USE_CUDA:
         encoder.cuda()
@@ -86,7 +87,7 @@ def main():
 
         
         ### バッチデータごとに処理
-        plot_loss_total = 0
+        loss_list = []
         for batch_idx in range(train_size // batch_size):
             if DEBUG: print(batch_idx)
             batches = np.random.choice(np.arange(train_size), batch_size, p=train_probs)
@@ -107,19 +108,22 @@ def main():
                 print("time :", time.time()-start)
             # Keep track of loss
             print_loss_total += loss
-            plot_loss_total += loss
+            loss_list.append(loss)
             
             if (batch_idx + 1)% print_every == 0:
                 print_loss_avg = print_loss_total / print_every
-                print_loss_total = plot_loss_total / ((batch_idx + 1) * print_every)
+                print_loss_total = np.mean(loss_list)
+                if len(loss_list) > 1000:
+                    loss_list = loss_list[-1000:]
                 end = time.time()
                 print("batch idx : {}/{}".format(batch_idx, train_size // batch_size))
                 print("time :", end-start)
                 start = end
-                print("loss avg :{}\nloss total : {}".format(print_loss_avg, print_loss_total))
+                print("loss avg :{}\nloss mv avg : {}".format(print_loss_avg, print_loss_total))
                 print_loss_total = 0
         
-            if (epoch % 1 == 0) and (batch_idx % 1000 == 0):
+            if (epoch % 1 == 0) and (batch_idx % 2000 == 0):
+                plot_loss_total = 0
                 torch.save(encoder.state_dict(), "{}/encoder_{}_{}".format(outpath, epoch, batch_idx))
                 torch.save(decoder.state_dict(), "{}/decoder_{}_{}".format(outpath, epoch, batch_idx))
 
@@ -137,18 +141,12 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
     batch_size = input_variable.size()[0]     # input_variable = B * N 
     input_length = input_variable.size()[1]   
     target_length = target_variable.size()[1] # target_variable = B * M
-
     
     # Run words through encoder
-    encoder_hidden = encoder.init_hidden() # encoder_hidden = B * H
-    encoder_c = encoder.init_hidden()      # encoder_c = B * H
-    encoder_hidden, encoder_c = encoder(input_variable, encoder_hidden, encoder_c)
-    # encoder_hidden = N * B * H (1dim is list), encoder_c = N * B * H
+    encoder_out, encoder_c = encoder(input_variable)
     
     # Prepare input and output variables
     decoder_input = Variable(torch.LongTensor([[SOS_token]]*batch_size))
-    decoder_c = encoder_c[-1]
-    decoder_hidden = encoder_hidden[-1] # Use last hidden state from encoder to start decoder
 
     weight = (target_variable != PAD_token).data
     weight = weight.cpu().numpy() # weight = B * M
@@ -158,29 +156,19 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
 
     if USE_CUDA:
         decoder_input = decoder_input.cuda()
-        decoder_c = decoder_c.cuda()
         mask = mask.cuda()
         
     # Choose whether to use teacher forcing
     use_teacher_forcing = random.random() < teacher_forcing_ratio
-    if DEBUG: print("esize", encoder_hidden.size())
-
-    #if use_teacher_forcing:
-        # Teacher forcing: Use the ground-truth target as the next input
-        # decoder input = target variable
 
     decoder_outlist = [torch.LongTensor([SOS_token]*batch_size)]
     if USE_CUDA:decoder_outlist = [torch.cuda.LongTensor([[SOS_token]]*batch_size)]
-    random_val = np.random.rand()
     for di in range(target_length-1):
         if DEBUG: print("di", di)
-        decoder_output, _, _, _ = decoder(decoder_input, 
-                                          decoder_hidden,
-                                          decoder_c,
-                                          target=target_variable[:,:di+1],
-                                          encoder_out=encoder_hidden,
-                                          mask=mask[:,:di+1,:])
-        #decoder_output = B * Dict
+        decoder_output, _, _ = decoder(decoder_input, 
+                                       encoder_out=encoder_out,
+                                       mask=mask[:,di,:].unsqeeze(1))
+
         index = np.where(weight[:, di+1])[0]
         if len(index) == 0:
             break
@@ -190,11 +178,12 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
         topv, topi = decoder_output.data.topk(1)
         decoder_outlist.append(topi)
 
-        if random_val < teacher_forcing_ratio:
-            decoder_input = target_variable[:,:di+2] # Next target is next input
+        if use_teacher_forcing:
+            decoder_input = target_variable[:,di+1] # Next target is next input
         else:
             #print(decoder_outlist)
-            decoder_input = Variable(torch.cat(decoder_outlist, dim=1))
+            decoder_input = Variable(torch.LongTensor(topi), dim=1)
+            print(decoder_input.size())
             if USE_CUDA: decoder_input = decoder_input.cuda()
 
             
@@ -209,7 +198,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
 
     if DEBUG: print("Done")
     
-    return loss.data[0] / target_length
+    return loss.data[0] / max(1, di) #target_length 
 
 
 if __name__ == "__main__":
