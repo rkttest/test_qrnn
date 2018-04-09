@@ -21,7 +21,7 @@ DEBUG = False
 
 def main():
     ### データの読み込み
-    train_path = "../../TrainData/train.npy"
+    train_path = "../../TrainData/corpus_train_merged.npy"
     train_data = np.load(train_path)
     train_pair = train_data.reshape(-1, 2, train_data.shape[1])
     train_size = train_pair.shape[0]
@@ -31,7 +31,7 @@ def main():
     #train_pair = train_pair[shuffle_arr]
     #train_probs = (train_pair[:,1] > 0).sum(axis=1)
     #smoothing = 4
-    train_probs = np.load("../../TrainData/weight.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
+    train_probs = np.load("../../TrainData/weight_merged.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
     train_probs = train_probs.reshape(-1, 2)[:, 1]
     train_probs = train_probs / train_probs.sum()
     ### ここまでを別の処理で行う
@@ -42,14 +42,14 @@ def main():
     hidden_size = 500
     n_layers = 2
     dropout_p = 0.2
-    n_words = 54000 #6600 #54000
+    n_words = 52000 #6600 #54000
     batch_size = 15 #40 #15
     n_epochs = 15
     plot_every = 10
     print_every = 1
-    learning_rate = 0.005
+    learning_rate = 0.01
     l2 = 0.0002
-    outpath = "SavedModel/7"
+    outpath = "SavedModel/8"
     ### ネットワークの定義
     encoder = Encoder(dict_size=n_words,
                          hidden_size=hidden_size,
@@ -59,10 +59,10 @@ def main():
                       n_layers=n_layers)
     if not os.path.exists(outpath):
         os.mkdir(outpath)
-    encoder_param = torch.load("SavedModel/7/encoder_1_4000")
-    decoder_param = torch.load("SavedModel/7/decoder_1_4000")
-    encoder.load_state_dict(encoder_param)
-    decoder.load_state_dict(decoder_param)
+    #encoder_param = torch.load("SavedModel/7/encoder_1_4000")
+    #decoder_param = torch.load("SavedModel/7/decoder_1_4000")
+    #encoder.load_state_dict(encoder_param)
+    #decoder.load_state_dict(decoder_param)
     init_epoch = 1
     if USE_CUDA:
         encoder.cuda()
@@ -77,8 +77,8 @@ def main():
     ### 学習開始
     for epoch in range(init_epoch, n_epochs + 1):
         print("epoch :", epoch)
-        if epoch % 3 == 0:
-            learning_rate = learning_rate * 0.3 #1 epoch ごとに 0.5 倍していく
+        if epoch in [2, 6, 10]:
+            learning_rate = learning_rate * 0.1 #1 epoch ごとに 0.5 倍していく
         encoder_optimizer = Adam(encoder.parameters(),
                                        lr=learning_rate, amsgrad=True, weight_decay=l2)
         decoder_optimizer = Adam(decoder.parameters(),
@@ -119,7 +119,7 @@ def main():
                 print("loss avg :{}\nloss total : {}".format(print_loss_avg, print_loss_total))
                 print_loss_total = 0
         
-            if (epoch % 1 == 0) and (batch_idx % 1000 == 0):
+            if (epoch % 1 == 0) and (batch_idx % 2000 == 0):
                 torch.save(encoder.state_dict(), "{}/encoder_{}_{}".format(outpath, epoch, batch_idx))
                 torch.save(decoder.state_dict(), "{}/decoder_{}_{}".format(outpath, epoch, batch_idx))
 
@@ -209,7 +209,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
 
     if DEBUG: print("Done")
     
-    return loss.data[0] / target_length
+    return loss.data[0] / max(1, di) #target_length
 
 
 if __name__ == "__main__":

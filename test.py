@@ -17,10 +17,10 @@ from networks import Encoder, Decoder, USE_CUDA
 MAX_LENGTH = 50
 DEBUG=False
 def main():
-    test_path = "../../TrainData/test.npy"
+    test_path = "../../TrainData/corpus_test_merged.npy"
     test_data = np.load(test_path)
     test_pairs = test_data.reshape(-1, 2, test_data.shape[1])
-    dictpath = "../../Dictionary/datum/reshape_dict.csv"
+    dictpath = "../../Dictionary/datum/reshape_merged_dict.csv"
     #dictpath = "../../Dictionary/datum/corpus_reshape_dict.csv"
     dictionary = simpleWordDict(dictpath)
     
@@ -28,10 +28,10 @@ def main():
     hidden_size = 500
     n_layers = 2
     dropout_p = 0.05
-    n_words = 54000 #6600 #54000
+    n_words = 52000 #6600 #54000
     
-    en_path = "SavedModel/7/encoder_7_2000"
-    de_path = "SavedModel/7/decoder_7_2000"
+    en_path = "SavedModel/8/encoder_6_12000"
+    de_path = "SavedModel/8/decoder_6_12000"
     encoder_param = torch.load(en_path)
     decoder_param = torch.load(de_path)
 
