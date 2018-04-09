@@ -12,28 +12,36 @@ class FOPooling(nn.Module):
         self.tanh = nn.functional.tanh
         self.dropout_p = dropout_p
         
-    def forward(self, Y, init_c, init_h):
+    def forward(self, Y, init_c):
         # Y = N * B * 3H
+        # init_c = B * H
         n_seq = Y.size()[0]
-
         F, Z, O = Y.chunk(3, dim=2)
+
+        # F, Z, O = N * B * H -> N * B * H
+        # n_seq = N
         F = self.sigmoid(F)
+        F = self.zoneout(F)
         Z = self.tanh(Z)
         O = self.sigmoid(O)
 
-        F = self.zoneout(F)
-        
+        # ZF : N * B * H
         ZF = torch.mul(1-F, Z)
-        h_out = [init_h]
-        c_out = [init_c]
+        h_out = []
+        c_out_list = [init_c]
         for t in range(n_seq):
-            c = torch.add(torch.mul(F[t], c_out[-1]), ZF[t])
+            # c = B * H
+            c = torch.add(torch.mul(F[t], c_out_list[-1]), ZF[t])
+            # h = B * H
             h = torch.mul(c, O[t])
             h_out.append(h)
-            c_out.append(c)
+            c_out_list.append(c)
 
-        h_out = torch.stack(h_out[1:])
-        return h_out, c_out
+        # h_out = N * B * H
+        # c_out = list(B * H), listlen=N+1
+        # c_out[-1] = B * H
+        h_out = torch.stack(h_out)
+        return h_out, c_out_list[-1]
 
     def zoneout(self, F):
         F = 1 - nn.functional.dropout(1 - F, p=self.dropout_p)
@@ -43,55 +51,61 @@ class FOPooling(nn.Module):
         
 class QRNN(nn.Module):
 
-    def __init__(self, hidden_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1):
-        super(QRNN, self).__init__()
-        self.n_layers = n_layers
-        self.conv1 = nn.Conv1d(hidden_size, hidden_size*3, kernel_size) #B * C * L -> B * C_out * L_out
+    def __init__(self, input_dim=64, hidden_size=64, dropout_p=0.2, kernel_size=1):
+        super(QRNN, self).__init__()        
+        self.conv1 = nn.Conv1d(input_dim, hidden_size*3, kernel_size) #B * C * L -> B * C_out * L_out
         self.fopooling = FOPooling(dropout_p=dropout_p)
         
-    def forward(self, x, init_h, init_c):
-        # x = N * B * H
-            
-        for _ in range(self.n_layers):
-            h_out, c_out = self.conv2pool(x, init_h, init_c)
-            init_c = c_out[-1]
-            init_h = h_out[-1]
-            x = h_out
+    def forward(self, x, init_c):
+        return self.conv2pool(x, init_c)
+
+    def conv2pool(self, x, init_c):
+        # x = N * B * H (or E)
+        # init_h = B * H
+        # init_c = B * H
+        x = x.transpose(1, 2) #x = N * H * B
+        x = self.conv1(x)     #x = N * 3H * B
+        x = x.transpose(1, 2) #x = N * B * 3H
+        # h_out = N * B * H
+        # c_out = B * H
+        x, c_out = self.fopooling(x,init_c)
         return x, c_out
 
 
-    def conv2pool(self, x, init_h, init_c):
-        x = x.transpose(1, 2) #x = N * H * B
-        x = self.conv1(x)
-        x = x.transpose(1, 2) #x = N * B * H
-        h_out, c_out = self.fopooling(x, init_h, init_c)
-        return h_out, c_out
-
-
 class Attention(nn.Module):
-    def __init__(self):
+    def __init__(self, hidden_size=64):
         super(Attention, self).__init__()
         self.softmax = nn.functional.softmax
+        self.linear_score = nn.Linear(hidden_size, hidden_size)
         
     def forward(self, input_encode, target_encode, mask=None):
         #input_encode = N * B * H
-        #target_encode = M * B * H
-        #matrix = B * M * N
-        #attn = B * M * N
-        #mask = B * M * N
+        #target_encode = 1 * B * H
+        #matrix = B * 1 * N
+        #attn = B * 1 * N
+        #mask = B * 1 * N
+
+        #input_encode : N * B * H -> B * H * N
         input_encode = input_encode.transpose(0, 1).transpose(1, 2)
+
+        #target_encode : 1 * B * H -> B * 1 * H
+        target_encode = self.linear_score(target_encode)
         target_encode = target_encode.transpose(0, 1)
+        
         #tmp = torch.cat([input_encode, target_encode], dim=2)
+        #matrix : B * 1 * N
         matrix = torch.bmm(target_encode, input_encode)
-        matrix -= matrix.mean(dim=2).unsqueeze(2)
-        matrix = (matrix ** 2).sqrt()
+        #matrix -= matrix.mean(dim=2).unsqueeze(2)
+        #matrix = (matrix ** 2).sqrt()
         if mask is not None:
             #print(mask.size(), matrix.size())
+            #print(matrix.data[0,0,-10:])            
             matrix.data.masked_fill_(mask, -float("Inf"))
-            #print(matrix.data[0])
-        attn = self.softmax(matrix, dim=2).detach()
-        #print(attn.data[0])
+            #print(matrix.data[0,0,-10:])            
+
+        #attn : B * 1 * N
+        attn = self.softmax(matrix, dim=2)
+        #print(attn.data[0,0,-10:])
         return attn
 
     def score(in_vect, tar_vect):

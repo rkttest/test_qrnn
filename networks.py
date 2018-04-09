@@ -7,69 +7,98 @@ from qrnn import QRNN, Attention
 USE_CUDA=True
 
 class Decoder(nn.Module):
-    def __init__(self, dict_size=60, hidden_size=64,
-                 n_layers=1, dropout_p=0.2, kernel_size=1):
+    def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
+                 n_layers=2, dropout_p=0.2, kernel_size=1):
+        
         super(Decoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
         self.softmax = nn.functional.softmax
-        self.embed = nn.Embedding(dict_size, hidden_size,
+        self.embed = nn.Embedding(dict_size, embedding_size,
                                    padding_idx=None)
-        self.qrnn = QRNN(hidden_size,
-                         n_layers, dropout_p, kernel_size)
+        self.init_qrnn = QRNN(embedding_size, hidden_size, dropout_p, kernel_size)
+        self.qrnn = QRNN(hidden_size, hidden_size, dropout_p, kernel_size)
+        self.qrnn_list = [self.init_qrnn] + [self.qrnn] * (n_layers - 1)
         self.hidden_size = hidden_size
-        self.attention = Attention()
+        self.attention = Attention(self.hidden_size)
+        self.n_layers = n_layers
+        self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
         
-    def forward(self, x, h_prev, c_prev, target=None,
+    def forward(self, x, c_init_list, 
                 encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
-        # target is not None -> attention
-        x = self.embed(x).transpose(0, 1) #x = M * B * H
-        h_out, c_out = self.qrnn(x, h_prev, c_prev)
 
+        # x :1文字の入力ベクトル : 1 * B 
+        # x : B -> 1 * B * E
+        x = self.embed(x)
+        c_out_list = []
+        for n in range(self.n_layers):
+            # x : 1 * B * E (or H) -> 1 * B * E
+            # c_out -> B * H
+            x, c_out = self.qrnn_list[n](x, c_init_list[n])
+            c_out_list.append(c_out) 
         #このあと attention を加える
-        if target is not None:
-            target = self.embed(target).transpose(0, 1)
-            target_h_out, target_c_out = self.qrnn(target, h_prev,
-                                                   c_prev)
-            attn = self.attention(encoder_out, target_h_out, mask)
-            #print(encoder_out.data[:,0, 0], "before atten")
+        if encoder_out is not None:
+            # x : 1 * B * H
+            # encoder_out : N * B * H
+            # mask : B * 1 * N
+            # attn : B * 1 * N
+            attn = self.attention(encoder_out, x, mask)
+
+            # encoder_out : N * B * H -> 1 * B * H
             encoder_out = torch.bmm(attn,
                                     encoder_out.transpose(0, 1)).transpose(0, 1)
-            #print(encoder_out.data[:,0, 0], "after atten")
-            #print(attn.size(), attn.data[0, :, -10:])
-            #print(h_out.data[:,0,0], "hout")
-            h_out += encoder_out
-            #print(h_out.data[:,0, 0], "hout atten")       
+            # x_cat : 1 * B * 2H
+            x_cat = torch.cat([encoder_out, x], dim=2)
 
-        h_out, c_out = self.qrnn(x, h_out[0], c_out[-1])
-        probs = self.linear(h_out[-1])
+            # x (attn_vect) : 1 * B * H
+            x = nn.functional.tanh(self.attn_linear(x_cat))
+            
+        #probs : 1 * B * DictSize
+        probs = self.linear(x)
         #probs = self.softmax(probs, dim=1)
-        return probs, h_out[-1], c_out[-1], attn
+
+        # c_out_list : list(B * H), listlen=n_layers
+        
+        return probs, c_out_list, attn
         
         
 class Encoder(nn.Module):
-    def __init__(self, dict_size=60, hidden_size=64,
+    def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
                  n_layers=2, dropout_p=0.2, kernel_size=1,
                  batch_size=50):
         super(Encoder, self).__init__()
-        self.qrnn = QRNN(hidden_size,
-                 n_layers, dropout_p, kernel_size)
-        self.embed = nn.Embedding(dict_size, hidden_size,
+        self.qrnn = QRNN(hidden_size, hidden_size, dropout_p, kernel_size)
+        self.init_qrnn = QRNN(embedding_size, hidden_size, dropout_p, kernel_size)
+        self.embed = nn.Embedding(dict_size, embedding_size,
                                    padding_idx=None)
-        self.batch_size = batch_size
         self.hidden_size = hidden_size
+        self.n_layers = n_layers
+        self.qrnn_list = [self.init_qrnn] + [self.qrnn] * (n_layers - 1)
+        self.hidden_dims = [hidden_size] * n_layers 
+        torch.manual_seed(1)
+        if USE_CUDA:torch.cuda.manual_seed_all(1)
         
-    def forward(self, x, init_h, init_c):
-	# 通常のSeq2Seq->decoderに1つ渡す
-        # Attention->decoderに出力サイズのinputを渡す
+    def forward(self, x):
+        # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
+        # init_c : Qrnn の初期値(t = -1 の値) : B * E (n=0), B * H (n > 0) : n_layerl分
+        batch_size = x.size()[0]
+        init_c = [self.init_hidden(batch_size, dim) for dim in self.hidden_dims]
 
-        x = self.embed(x).transpose(0, 1) #X=B*N -> x=B*N*H
-        h_out, c_out = self.qrnn(x, init_h, init_c)            
-        return h_out, c_out
+        # x : B * N -> N * B * E (E : Embedding dim)
+        x = self.embed(x).transpose(0, 1)
+        c_out_list = []
 
-    def init_hidden(self):
-        hidden = Variable(torch.zeros(self.batch_size,
-                                      self.hidden_size))
+        for n in range(self.n_layers):
+            # n = 0 : x : N*B*E, init_c : B*H
+            # n > 0 : x : N*B*H, init_c : B*H
+            x, c_out = self.qrnn_list[n](x, init_c[n])
+            c_out_list.append(c_out)
+
+        # c_out_list : list(B*H), listlen=n_layers
+        return x, c_out_list
+
+    def init_hidden(self, batch_size=50, dim=64):
+        hidden = Variable(torch.rand(batch_size, dim) * 0.01) 
         if USE_CUDA: hidden = hidden.cuda()
         return hidden
     
@@ -81,24 +110,15 @@ if __name__=="__main__":
     X += np.random.randint(0, 3, X.shape)
 
     X = Variable(torch.from_numpy(X))
-    Y = Variable(torch.from_numpy(Y[:,:1].reshape(-1, 1)))
+    Y = Variable(torch.from_numpy(Y))
+    Sos = Variable(torch.zeros(20, 1).type(torch.LongTensor))
     print("X, Y size", X.size(), Y.size())
-    sos = Variable(torch.from_numpy(np.zeros((20), dtype=int).reshape(-1, 1)))
-
-    init_h = Variable(torch.zeros(20, 64))
-    init_c = Variable(torch.zeros(20, 64))
 
     encoder = Encoder()
     decoder = Decoder()
-    attention = Attention()
 
-    encoder_hidden, encoder_c = encoder(X, init_h, init_c, Y)
-    decoder_init_h = encoder_hidden[-1]
-    decoder_init_c = encoder_c[-1]
-    probs, h_out, c_out = decoder(sos, decoder_init_h,
-                                  decoder_init_c, encoder_out=encoder_hidden)
-
-    print(probs.size(), h_out.size())
-    
-
+    encoder_out, encoder_c = encoder(X)
+    print("len enc c", len(encoder_c))
+    probs, c_out, attn = decoder(Sos,encoder_c, encoder_out=encoder_out)
+    print(probs.size(), c_out[0].size())
     
