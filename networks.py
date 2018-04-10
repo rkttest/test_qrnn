@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 from qrnn import QRNN, Attention
-USE_CUDA=False
+USE_CUDA=True
 
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
@@ -30,14 +30,12 @@ class Decoder(nn.Module):
         # x :1文字の入力ベクトル : 1 * B 
         # x : B -> 1 * B * E
         x = self.embed(x)
-        
         c_out_list = []
         for n in range(self.n_layers):
             # x : 1 * B * E (or H) -> 1 * B * E
             # c_out -> B * H
             x, c_out = self.qrnn_list[n](x, c_init_list[n])
-            c_out_list.append(c_out)
-            
+            c_out_list.append(c_out) 
         #このあと attention を加える
         if encoder_out is not None:
             # x : 1 * B * H

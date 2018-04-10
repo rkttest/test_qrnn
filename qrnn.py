@@ -95,16 +95,17 @@ class Attention(nn.Module):
         #tmp = torch.cat([input_encode, target_encode], dim=2)
         #matrix : B * 1 * N
         matrix = torch.bmm(target_encode, input_encode)
-        matrix -= matrix.mean(dim=2).unsqueeze(2)
-        matrix = (matrix ** 2).sqrt()
+        #matrix -= matrix.mean(dim=2).unsqueeze(2)
+        #matrix = (matrix ** 2).sqrt()
         if mask is not None:
             #print(mask.size(), matrix.size())
+            #print(matrix.data[0,0,-10:])            
             matrix.data.masked_fill_(mask, -float("Inf"))
-            #print(matrix.data[0])
+            #print(matrix.data[0,0,-10:])            
 
         #attn : B * 1 * N
         attn = self.softmax(matrix, dim=2)
-        #print(attn.data[0])
+        #print(attn.data[0,0,-10:])
         return attn
 
     def score(in_vect, tar_vect):

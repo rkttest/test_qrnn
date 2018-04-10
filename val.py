@@ -17,12 +17,12 @@ import seaborn as sns
 PAD_token = 0
 SOS_token = 1
 EOS_token = 2
-
+from train import train
 DEBUG = False
 
 def main():
     ### データの読み込み
-    train_path = "../../TrainData/val.npy"
+    train_path = "../../TrainData/corpus_val_merged.npy"
     train_data = np.load(train_path)
     train_pair = train_data.reshape(-1, 2, train_data.shape[1])
     train_size = train_pair.shape[0]
@@ -37,10 +37,11 @@ def main():
     ### ハイパーパラメータの定義
     print("train size", train_pair.shape)
     attn_model = 'general'
-    hidden_size = 500
+    embedding_size = 256
+    hidden_size = 512
     n_layers = 2
     dropout_p = 0
-    n_words = 54000
+    n_words = 52000
     batch_size = 4
     plot_every = 10
     print_every = 1
@@ -48,9 +49,11 @@ def main():
     
     ### ネットワークの定義
     encoder = Encoder(dict_size=n_words,
+                      embedding_size=embedding_size,
                          hidden_size=hidden_size,
                          n_layers=n_layers, batch_size=batch_size)                         
     decoder = Decoder(dict_size=n_words,
+                      embedding_size=embedding_size,
                       hidden_size=hidden_size,
                       n_layers=n_layers)
 
@@ -75,19 +78,19 @@ def main():
     ###
 
     init_epoch = 1
-    n_epochs = 7
-    n_batch = 12
-    base_dir = "SavedModel/5/"
+    n_epochs = 10
+    n_batch = 5
+    base_dir = "SavedModel/9/"
     
     for epoch in range(init_epoch, n_epochs+1):
 
         ### バッチデータごとに処理
         for batch in range(n_batch):
-            print("fname", base_dir + "encoder_{}_{}".format(epoch, batch*1000))
+            print("fname", base_dir + "encoder_{}_{}".format(epoch, batch*2000))
             total_loss = 0
             
-            encoder_param = torch.load(base_dir + "encoder_{}_{}".format(epoch, batch*1000))
-            decoder_param = torch.load(base_dir + "decoder_{}_{}".format(epoch, batch*1000))
+            encoder_param = torch.load(base_dir + "encoder_{}_{}".format(epoch, batch*2000))
+            decoder_param = torch.load(base_dir + "decoder_{}_{}".format(epoch, batch*2000))
             encoder.load_state_dict(encoder_param)
             decoder.load_state_dict(decoder_param)
 
@@ -102,7 +105,7 @@ def main():
                     target_variable = target_variable.cuda()
                 
                 # Run the train function
-                loss = train(input_variable, target_variable, encoder, decoder)
+                loss = train(input_variable, target_variable, encoder, decoder, teacher_forcing_ratio=1)
                 total_loss += loss
             mean_loss = total_loss / (train_size // batch_size)
             mean_loss_list.append(mean_loss)
@@ -118,11 +121,12 @@ def main():
 
     print("minimul loss:", np.min(mean_loss_arr))
     print("minimul model:{}epoch + {}data".format(*index_list[np.argmin(mean_loss_arr)]))
-        
-def train(input_variable, target_variable, encoder, decoder, max_length=50):
-    teacher_forcing_ratio = 10.5
+
+def train(input_variable, target_variable, encoder, decoder, max_length=50, teacher_forcing_ratio=0.5):
+
     clip = 4.0
     
+    # Zero gradients of both optimizers
     loss = 0 # Added onto for each word
     
     # Get size of input and target sentences
@@ -131,51 +135,55 @@ def train(input_variable, target_variable, encoder, decoder, max_length=50):
     target_length = target_variable.size()[1] # target_variable = B * M
     
     # Run words through encoder
-    encoder_hidden = encoder.init_hidden() # encoder_hidden = B * H
-    encoder_c = encoder.init_hidden()      # encoder_c = B * H
-    encoder_hidden, encoder_c = encoder(input_variable, encoder_hidden, encoder_c)
-    # encoder_hidden = N * B * H (1dim is list), encoder_c = N * B * H
+    encoder_out, encoder_c = encoder(input_variable)
     
     # Prepare input and output variables
-    decoder_input = Variable(torch.LongTensor([[SOS_token]]*batch_size))
-    decoder_c = encoder_c[-1]
-    decoder_hidden = encoder_hidden[-1] # Use last hidden state from encoder to start decoder
-
+    decoder_input = Variable(torch.LongTensor([[SOS_token]*batch_size]))
+    decoder_c = encoder_c
     weight = (target_variable != PAD_token).data
     weight = weight.cpu().numpy() # weight = B * M
 
+    # Generate attention mask
+    mask = torch.stack([input_variable == 0 for _ in range(target_length)], dim=1).data
+
+
     if USE_CUDA:
         decoder_input = decoder_input.cuda()
-        decoder_c = decoder_c.cuda()
+        mask = mask.cuda()
         
-        # Choose whether to use teacher forcing
+    # Choose whether to use teacher forcing
     use_teacher_forcing = random.random() < teacher_forcing_ratio
-    if DEBUG: print("esize", encoder_hidden.size())
 
-    #if use_teacher_forcing:
-        # Teacher forcing: Use the ground-truth target as the next input
-        # decoder input = target variable
-        
+    decoder_outlist = [torch.LongTensor([SOS_token]*batch_size)]
+    if USE_CUDA:decoder_outlist = [torch.cuda.LongTensor([[SOS_token]]*batch_size)]
+
     for di in range(target_length-1):
         if DEBUG: print("di", di)
-        decoder_output, _, _, _ = decoder(decoder_input, 
-                                          decoder_hidden,
-                                          decoder_c,
-                                          target=target_variable[:,:di+1],
-                                          encoder_out=encoder_hidden)
-        #decoder_output = B * Dict
+        decoder_output, decoder_c, attn = decoder(decoder_input, decoder_c,
+                                       encoder_out=encoder_out,
+                                       mask=mask[:,di,:].unsqueeze(1))
+
         index = np.where(weight[:, di+1])[0]
         if len(index) == 0:
             break
         index = torch.from_numpy(index)
         if USE_CUDA: index = index.cuda()
-        loss += nn.CrossEntropyLoss()(decoder_output[index],target_variable[index][:, di+1])
+        loss += nn.CrossEntropyLoss()(decoder_output[0][index],target_variable[index][:, di+1])
+        topv, topi = decoder_output.data.topk(1)
+        decoder_outlist.append(topi)
 
-        decoder_input = target_variable[:,:di+2] # Next target is next input
-
+        if use_teacher_forcing:
+            decoder_input = target_variable[:,di+1].unsqueeze(0).detach() # Next target is next input
+        else:
+            #print(decoder_outlist)
+            if USE_CUDA:
+                decoder_input = Variable(torch.cuda.LongTensor(topi[:,:,0])).detach()
+            else:
+                decoder_input = Variable(torch.LongTensor(topi[:,:,0])).detach()
+                #print("decoder size", decoder_input.size())
+            
     
-    return loss.data[0] / target_length
-
+    return loss.data[0] / max(1, di) #target_length
 
 if __name__ == "__main__":
     main()

@@ -19,10 +19,27 @@ EOS_token = 2
 
 DEBUG = False
 
+from torch.nn.init import xavier_uniform, kaiming_uniform, xavier_normal
+def xavier_init(model):
+    count = 0
+    for param in model.parameters():
+        if len(param.size()) >= 2:
+            count += 1
+            xavier_normal(param)
+            print(param.data.mean())
+
+    print("--------total----------")
+    print(count)
+
+
 def main():
     ### データの読み込み
-    train_path = "../../TrainData/corpus_train.npy"
+    train_path = "../../TrainData/corpus_train_merged.npy"
+
+    #train_path = "../../TrainData/corpus_train.npy"
+
     train_data = np.load(train_path)
+    print(train_data.max())
     train_pair = train_data.reshape(-1, 2, train_data.shape[1])
     train_size = train_pair.shape[0]
     np.random.seed(1)
@@ -31,21 +48,22 @@ def main():
     #train_pair = train_pair[shuffle_arr]
     #train_probs = (train_pair[:,1] > 0).sum(axis=1)
     #smoothing = 4
+    train_probs = np.load("../../TrainData/weight_merged.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
     #train_probs = np.load("../../TrainData/weight.npy") #(train_probs + smoothing) / (train_probs + smoothing).sum()
-    train_probs = np.ones(train_size)
-    train_probs = train_probs.reshape(-1, 2)[:, 1]
+    #train_probs = np.ones(train_size)
+    train_probs = train_probs.reshape(-1, 2)[:,1]
     train_probs = train_probs / train_probs.sum()
     ### ここまでを別の処理で行う
 
     ### ハイパーパラメータの定義
     print("train size", train_pair.shape)
     #attn_model = 'general'
-    embedding_size = 256
     hidden_size = 512
+    embedding_size = 256
     n_layers = 2
     dropout_p = 0.2
-    n_words = 54000 #6600 #54000
-    batch_size = 15 #40 #15
+    n_words = 52000 #6600 #54000
+    batch_size = 30 #40 #15
     n_epochs = 15
     plot_every = 10
     print_every = 1
@@ -61,6 +79,9 @@ def main():
                       embedding_size=embedding_size,
                       hidden_size=hidden_size,
                       n_layers=n_layers)
+
+    xavier_init(encoder)
+    xavier_init(decoder)
     if not os.path.exists(outpath):
         os.mkdir(outpath)
     #encoder_param = torch.load("SavedModel/7/encoder_1_4000")
@@ -149,13 +170,14 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
     encoder_out, encoder_c = encoder(input_variable)
     
     # Prepare input and output variables
-    decoder_input = Variable(torch.LongTensor([[SOS_token]]*batch_size))
-
+    decoder_input = Variable(torch.LongTensor([[SOS_token]*batch_size]))
+    decoder_c = encoder_c
     weight = (target_variable != PAD_token).data
     weight = weight.cpu().numpy() # weight = B * M
 
     # Generate attention mask
     mask = torch.stack([input_variable == 0 for _ in range(target_length)], dim=1).data
+
 
     if USE_CUDA:
         decoder_input = decoder_input.cuda()
@@ -166,29 +188,31 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
 
     decoder_outlist = [torch.LongTensor([SOS_token]*batch_size)]
     if USE_CUDA:decoder_outlist = [torch.cuda.LongTensor([[SOS_token]]*batch_size)]
+
     for di in range(target_length-1):
         if DEBUG: print("di", di)
-        decoder_output, _, _ = decoder(decoder_input, 
+        decoder_output, decoder_c, attn = decoder(decoder_input, decoder_c,
                                        encoder_out=encoder_out,
-                                       mask=mask[:,di,:].unsqeeze(1))
+                                       mask=mask[:,di,:].unsqueeze(1))
 
         index = np.where(weight[:, di+1])[0]
         if len(index) == 0:
             break
         index = torch.from_numpy(index)
         if USE_CUDA: index = index.cuda()
-        loss += nn.CrossEntropyLoss()(decoder_output[index],target_variable[index][:, di+1])
+        loss += nn.CrossEntropyLoss()(decoder_output[0][index],target_variable[index][:, di+1])
         topv, topi = decoder_output.data.topk(1)
         decoder_outlist.append(topi)
 
         if use_teacher_forcing:
-            decoder_input = target_variable[:,di+1] # Next target is next input
+            decoder_input = target_variable[:,di+1].unsqueeze(0).detach() # Next target is next input
         else:
             #print(decoder_outlist)
-            decoder_input = Variable(torch.LongTensor(topi), dim=1)
-            print(decoder_input.size())
-            if USE_CUDA: decoder_input = decoder_input.cuda()
-
+            if USE_CUDA:
+                decoder_input = Variable(torch.cuda.LongTensor(topi[:,:,0])).detach()
+            else:
+                decoder_input = Variable(torch.LongTensor(topi[:,:,0])).detach()
+                #print("decoder size", decoder_input.size())
             
     # Backpropagation
     if DEBUG: print("Start BackWard")
@@ -201,7 +225,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer, 
 
     if DEBUG: print("Done")
     
-    return loss.data[0] / max(1, di) #target_length 
+    return loss.data[0] / max(1, di) #target_length
 
 
 if __name__ == "__main__":
