@@ -7,14 +7,13 @@ from qrnn import QRNN, Attention
 USE_CUDA=False
 
 class Decoder(nn.Module):
-    def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
+    def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=32,
                  n_layers=2, dropout_p=0.2, kernel_size=1):
         
         super(Decoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
         self.softmax = nn.functional.softmax
-        self.embed = nn.Embedding(dict_size, embedding_size,
-                                   padding_idx=None)
+        self.embed = embedding
         self.init_qrnn = QRNN(embedding_size, hidden_size, dropout_p, kernel_size)
         self.qrnn = QRNN(hidden_size, hidden_size, dropout_p, kernel_size)
         self.qrnn_list = [self.init_qrnn] + [self.qrnn] * (n_layers - 1)
@@ -63,13 +62,12 @@ class Decoder(nn.Module):
         
         
 class Encoder(nn.Module):
-    def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
+    def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=32,
                  n_layers=2, dropout_p=0.2, kernel_size=1):
         super(Encoder, self).__init__()
         self.qrnn = QRNN(hidden_size, hidden_size, dropout_p, kernel_size)
         self.init_qrnn = QRNN(embedding_size, hidden_size, dropout_p, kernel_size)
-        self.embed = nn.Embedding(dict_size, embedding_size,
-                                   padding_idx=None)
+        self.embed = embedding
         self.hidden_size = hidden_size
         self.n_layers = n_layers
         self.qrnn_list = [self.init_qrnn] + [self.qrnn] * (n_layers - 1)

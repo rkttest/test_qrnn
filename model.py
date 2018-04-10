@@ -32,9 +32,14 @@ class EncoderDecoder(nn.Module):
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
                  use_cuda=False):
         super(EncoderDecoder, self).__init__()
-        self.encoder = Encoder(dict_size=n_words, embedding_size=embedding_size,
+        self.embedding = nn.Embedding(n_words, embedding_size,
+                                      padding_idx=None)
+
+        self.encoder = Encoder(dict_size=n_words, embedding=self.embedding,
+                               embedding_size=embedding_size,
                                hidden_size=hidden_size, n_layers=n_layers)
-        self.decoder = Decoder(dict_size=n_words, embedding_size=embedding_size,
+        self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
+                               embedding_size=embedding_size,                               
                                hidden_size=hidden_size, n_layers=n_layers)
         self.use_cuda = use_cuda
         self.max_word_len = max_word_len
@@ -45,8 +50,15 @@ class EncoderDecoder(nn.Module):
         encoder_out, encoder_c = self.encoder(x)
         decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
         decoder_c = encoder_c
-        if self.use_cuda: decoder_input=decoder_input.cuda()        
+        mask = (x == 0).unsqueeze(1).data
+        if self.use_cuda:
+            decoder_input=decoder_input.cuda()
+            mask = mask.cuda()
+            
         decoder_outlist = []
+
+
+        
         for di in range(self.max_word_len):
             pad_eos_num = (decoder_input.data == self.tokens["PAD"]).sum() +\
                           (decoder_input.data == self.tokens["EOS"]).sum()
@@ -54,7 +66,8 @@ class EncoderDecoder(nn.Module):
                 break
             
             decoder_out, decoder_c, attention = self.decoder(decoder_input, decoder_c,
-                                                             encoder_out=encoder_out, mask=None)
+                                                             encoder_out=encoder_out,
+                                                             mask=mask)
             topv, topi = decoder_out.data.topk(1)
             if target is None:
                 decoder_input = Variable(torch.LongTensor(topi[:,:,0]))
@@ -120,7 +133,7 @@ class Trainer(object):
                 loss_list.append(loss.data[0] / size)
                 
                 self.optimize(loss)
-                if (idx + 1) % self.save_freq == 0:
+                if idx % self.save_freq == 0:
                     print("Varidation Start")
                     val_loss = self.validation()
                     self.save_model(os.path.join(self.save_dir,
@@ -152,8 +165,26 @@ class Trainer(object):
             losses.append(loss.data[0] / size)
         return np.mean(losses)
 
+    
     def test(self):
-        pass
+        test_out = []
+        
+        for idx, tensors in enumerate(self.testloader):
+            x = Variable(tensors[0])
+            target = Variable(tensors[1])
+            if self.model.use_cuda:
+                x = x.cuda()
+                target = target.cuda()
+            
+            model_out = self.model.forward(x)
+            topk, topi = model_out.data.topk(1)
+            print(topi.size())
+            print(x.size())
+
+            test_out.append([topi.cpu().numpy()[:,:,0], x.data.cpu().numpy(),
+                            target.data.cpu().numpy()])
+            
+        return test_out
 
     def optimize(self, loss):
         self.optim.zero_grad()

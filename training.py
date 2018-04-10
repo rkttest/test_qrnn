@@ -26,14 +26,18 @@ def main():
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
 
     train_arr = np.load("../json/train.npy")
-    train_arr = torch.from_numpy(train_arr.reshape(-1, 2, train_arr.shape[1]))
+    train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])
+    train_arr[:,0,:] = train_arr[:,0,::-1]
+    train_arr = torch.from_numpy(train_arr)
     weight = np.ones(train_arr.size()[0])
     weight = weight / weight.sum()
     val_arr = np.load("../json/val.npy")
-    val_arr = torch.from_numpy(val_arr.reshape(-1, 2, val_arr.shape[1])[:400])
-    test_arr = np.load("../json/test.npy")
+    val_arr = val_arr.reshape(-1, 2, val_arr.shape[1])[:600]
+    val_arr[:,0,:] = val_arr[:,0,::-1]
+    val_arr = torch.from_numpy(val_arr)
 
     train_data = TensorDataset(train_arr[:,0], train_arr[:,1])
+    
     val_data = TensorDataset(val_arr[:,0], val_arr[:,1])
     trainloader = DataLoader(train_data, batch_size=HP.batch_size,
                              sampler=WeightedRandomSampler(weight, num_samples=train_arr.size()[0]))
@@ -41,9 +45,11 @@ def main():
 
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       trainloader=trainloader, epoch=HP.epoch,
-                      valloader=valloader, save_dir="SavedModel/11", save_freq=HP.save_freq)
+                      valloader=valloader, save_dir="SavedModel/12", save_freq=HP.save_freq)
     
     writer = SummaryWriter()
+    
+    trainer.model_initialize()
     trainer.train(writer)
     
 if __name__=="__main__":
