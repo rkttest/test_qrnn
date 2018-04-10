@@ -40,7 +40,8 @@ def main():
     ### ハイパーパラメータの定義
     print("train size", train_pair.shape)
     #attn_model = 'general'
-    hidden_size = 500
+    embedding_size = 256
+    hidden_size = 512
     n_layers = 2
     dropout_p = 0.2
     n_words = 54000 #6600 #54000
@@ -48,14 +49,16 @@ def main():
     n_epochs = 15
     plot_every = 10
     print_every = 1
-    learning_rate = 0.005
+    learning_rate = 0.01
     l2 = 0.0002
-    outpath = "SavedModel/7"
+    outpath = "SavedModel/9"
     ### ネットワークの定義
     encoder = Encoder(dict_size=n_words,
+                      embedding_size=embedding_size,
                          hidden_size=hidden_size,
                          n_layers=n_layers, batch_size=batch_size)
     decoder = Decoder(dict_size=n_words,
+                      embedding_size=embedding_size,
                       hidden_size=hidden_size,
                       n_layers=n_layers)
     if not os.path.exists(outpath):
@@ -78,8 +81,8 @@ def main():
     ### 学習開始
     for epoch in range(init_epoch, n_epochs + 1):
         print("epoch :", epoch)
-        if epoch % 3 == 0:
-            learning_rate = learning_rate * 0.3 #1 epoch ごとに 0.5 倍していく
+        if epoch in [3, 7, 12]:
+            learning_rate = learning_rate * 0.1 #1 epoch ごとに 0.5 倍していく
         encoder_optimizer = Adam(encoder.parameters(),
                                        lr=learning_rate, amsgrad=True, weight_decay=l2)
         decoder_optimizer = Adam(decoder.parameters(),
