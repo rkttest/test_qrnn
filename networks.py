@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 from qrnn import QRNN, Attention
-USE_CUDA=True
+USE_CUDA=False
 
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
@@ -64,8 +64,7 @@ class Decoder(nn.Module):
         
 class Encoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding_size=32,
-                 n_layers=2, dropout_p=0.2, kernel_size=1,
-                 batch_size=50):
+                 n_layers=2, dropout_p=0.2, kernel_size=1):
         super(Encoder, self).__init__()
         self.qrnn = QRNN(hidden_size, hidden_size, dropout_p, kernel_size)
         self.init_qrnn = QRNN(embedding_size, hidden_size, dropout_p, kernel_size)
