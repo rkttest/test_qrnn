@@ -140,7 +140,7 @@ class Trainer(object):
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
                 
-                if idx % self.save_freq == 0:
+                if (idx+1) % self.save_freq == 0:
                     print("batch idx", idx)
                     end = time.time()
                     print("time : ", end -start )
