@@ -31,8 +31,8 @@ def main():
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
 
-    test_arr = np.load("../json/test.npy")
-    test_arr = test_arr.reshape(-1, 2, test_arr.shape[1])[:400]
+    test_arr = np.load("../json/train.npy")
+    test_arr = test_arr.reshape(-1, 2, test_arr.shape[1])[:400,:,:HP.max_word_len]
     test_arr[:,0,:] = test_arr[:,0,::-1]
     test_arr = torch.from_numpy(test_arr)
     
@@ -40,12 +40,11 @@ def main():
     testloader = DataLoader(test_data, batch_size=HP.batch_size)
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       testloader=testloader, epoch=HP.epoch,
-                      save_dir="SavedModel/12", save_freq=HP.save_freq)
+                      save_dir="SavedModel/18", save_freq=HP.save_freq)
 
-    model_path = "SavedModel/12/epoch4_batchidx150"
+    model_path = "SavedModel/18/epoch10_batchidx199"
     trainer.model_initialize(model_path)
     test_out = trainer.test()
-
 
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))

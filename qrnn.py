@@ -28,23 +28,25 @@ class FOPooling(nn.Module):
         # ZF : N * B * H
         ZF = torch.mul(1-F, Z)
         h_out = []
-        c_out_list = [init_c]
+        #c_out_list = [init_c]
+        c = init_c
         for t in range(n_seq):
             # c = B * H
-            c = torch.add(torch.mul(F[t], c_out_list[-1]), ZF[t])
+            c = torch.add(torch.mul(F[t], c), ZF[t])
             # h = B * H
             h = torch.mul(c, O[t])
             h_out.append(h)
-            c_out_list.append(c)
+            #c_out_list.append(c)
 
         # h_out = N * B * H
         # c_out = list(B * H), listlen=N+1
         # c_out[-1] = B * H
         h_out = torch.stack(h_out)
-        return h_out, c_out_list[-1]
+
+        return h_out, c #c_out_list[-1]
 
     def zoneout(self, F):
-        F = 1 - nn.functional.dropout(1 - F, p=self.dropout_p)
+        F = 1 - nn.functional.dropout(1 - F, p=self.dropout_p, training=True)
         return F
             
 

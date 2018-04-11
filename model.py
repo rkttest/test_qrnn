@@ -85,7 +85,19 @@ class EncoderDecoder(nn.Module):
             return decoder_outseq, attention_out
         return decoder_outseq
 
-
+    def word_forward(x, decoder_input, target=None, getattention=False):
+        encoder_out, encoder_c = self.encoder(x)
+        decoder_c = encoder_c
+        mask = (x == 0).unsqueeze(1).data
+        if self.use_cuda:
+            decoder_input=decoder_input.cuda()
+            mask = mask.cuda()
+                        
+        decoder_out, _, attention = self.decoder(decoder_input, decoder_c,
+                                                 encoder_out=encoder_out,
+                                                 mask=mask)
+        return decoder_out, attention
+        
     
 class Trainer(object):
 
@@ -139,7 +151,7 @@ class Trainer(object):
                 loss, size = self.get_loss(model_out, target)
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
-                
+
                 if (idx+1) % self.save_freq == 0:
                     print("batch idx", idx)
                     end = time.time()
@@ -193,10 +205,9 @@ class Trainer(object):
                 target = target.cuda()
             
             model_out = self.model.forward(x)
-            topk, topi = model_out.data.topk(1)
-            print(topi.size())
-            print(x.size())
-
+            probs = nn.functional.softmax(model_out, dim=2)
+            topk, topi = probs.data.topk(3)
+            
             test_out.append([topi.cpu().numpy()[:,:,0], x.data.cpu().numpy(),
                             target.data.cpu().numpy()])
             
@@ -205,7 +216,7 @@ class Trainer(object):
     def optimize(self, loss):
         self.optim.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm(self.model.parameters(), self.clip_norm)
+        torch.nn.utils.clip_grad_norm(self.model.parameters(), self.clip_norm)        
         self.optim.step()
 
     def get_loss(self, predict, target):

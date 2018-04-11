@@ -50,10 +50,10 @@ def main():
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq)
 
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
-    writer = SummaryWriter()
-    
-    trainer.model_initialize()
-    trainer.train(writer)
+    #writer = SummaryWriter()
+    trainer.model_initialize(os.path.join(HP.save_dir,"epoch15_batchidx199"))
+    #
+    trainer.train()#writer)
     
 if __name__=="__main__":
     main()
