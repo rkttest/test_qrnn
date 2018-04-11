@@ -1,6 +1,6 @@
-#coding:utf-8
+[]#coding:utf-8
 import os, sys
-from networks import Encoder, Decoder, USE_CUDA
+from networks import Encoder, Decoder
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -37,7 +37,7 @@ class EncoderDecoder(nn.Module):
 
         self.encoder = Encoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                               hidden_size=hidden_size, n_layers=n_layers)
+                               hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
         self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,                               
                                hidden_size=hidden_size, n_layers=n_layers)
@@ -57,6 +57,7 @@ class EncoderDecoder(nn.Module):
             
         decoder_outlist = []
         attention_out = []
+
         for di in range(self.max_word_len):
             pad_eos_num = (decoder_input.data == self.tokens["PAD"]).sum() +\
                           (decoder_input.data == self.tokens["EOS"]).sum()
@@ -70,10 +71,10 @@ class EncoderDecoder(nn.Module):
             attention_out.append(attention)
             
             if target is None:
-                decoder_input = Variable(torch.LongTensor(topi[:,:,0]))
+                decoder_input = Variable(topi[:,:,0]).detach()
                 if self.use_cuda:decoder_input = decoder_input.cuda()
             else:
-                decoder_input = target[:,di].unsqueeze(0)
+                decoder_input = target[:,di].unsqueeze(0).detach()
 
             decoder_outlist.append(decoder_out[0])
         decoder_outseq = torch.stack(decoder_outlist, dim=1) # B * M
@@ -106,7 +107,9 @@ class Trainer(object):
         self.n_iter = 0
         np.random.seed(1)
         torch.manual_seed(1)
-        if self.model.use_cuda: torch.cuda.manual_seed_all(1)
+        if self.model.use_cuda:
+            torch.cuda.manual_seed_all(1)
+            self.model = self.model.cuda()
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
             

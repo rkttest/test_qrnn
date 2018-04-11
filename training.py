@@ -25,14 +25,14 @@ def main():
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
 
-    train_arr = np.load("../json/train.npy")
+    train_arr = np.load("../../TrainData/corpus_train_merged.npy")
     train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])
     train_arr[:,0,:] = train_arr[:,0,::-1]
     train_arr = torch.from_numpy(train_arr)
     weight = np.ones(train_arr.size()[0])
     weight = weight / weight.sum()
-    val_arr = np.load("../json/val.npy")
-    val_arr = val_arr.reshape(-1, 2, val_arr.shape[1])[:600]
+    val_arr = np.load("../../TrainData/corpus_val_merged.npy")
+    val_arr = val_arr.reshape(-1, 2, val_arr.shape[1])[:1000]
     val_arr[:,0,:] = val_arr[:,0,::-1]
     val_arr = torch.from_numpy(val_arr)
 
