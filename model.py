@@ -1,4 +1,4 @@
-[]#coding:utf-8
+#coding:utf-8
 import os, sys
 from networks import Encoder, Decoder
 import torch
@@ -134,7 +134,7 @@ class Trainer(object):
                 loss_list.append(loss.data[0] / size)
                 
                 self.optimize(loss)
-                if (idx) % self.save_freq == 0:
+                if (idx + 1) % self.save_freq == 0:
                     print("batch idx ", idx)
                     end = time.time()
                     print("time :", end-start)
@@ -142,7 +142,7 @@ class Trainer(object):
                     print("Varidation Start")
                     val_loss = self.validation()
                     self.save_model(os.path.join(self.save_dir,
-                                                 "epoch{}_batchidx{}".format(epoch, idx)))
+                                                 "epoch{}_batchidx{}".format(epoch, idx+1)))
                     print("train loss {}".format(np.mean(loss_list)))
                     print("val loss {}".format(val_loss))
                     if summary_writer is not None:

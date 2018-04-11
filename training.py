@@ -45,7 +45,7 @@ def main():
 
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       trainloader=trainloader, epoch=HP.epoch,
-                      valloader=valloader, save_dir="SavedModel/10", save_freq=HP.save_freq)
+                      valloader=valloader, save_dir="SavedModel/11", save_freq=HP.save_freq)
     
     writer = SummaryWriter()
     
