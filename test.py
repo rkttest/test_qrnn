@@ -42,7 +42,7 @@ def main():
                       testloader=testloader, epoch=HP.epoch,
                       save_dir="SavedModel/12", save_freq=HP.save_freq)
 
-    model_path = "SavedModel/12/epoch0_batchidx100"
+    model_path = "SavedModel/12/epoch4_batchidx150"
     trainer.model_initialize(model_path)
     test_out = trainer.test()
 

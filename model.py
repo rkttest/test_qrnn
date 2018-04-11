@@ -80,7 +80,7 @@ class EncoderDecoder(nn.Module):
         if self.use_cuda:decoder_outseq = decoder_outseq.cuda()
 
         if getattention:
-            attention_out = torch.cat(attention_out, dim=2)
+            attention_out = torch.cat(attention_out, dim=1)
             return decoder_outseq, attention_out
         return decoder_outseq
 
@@ -121,8 +121,8 @@ class Trainer(object):
         for epoch in range(self.epoch):
             print("epoch {}".format(epoch))
             loss_list = []
+            start = time.time()
             for idx, tensors in enumerate(self.trainloader):
-                print("batch idx ", idx)
                 x = Variable(tensors[0])
                 target = Variable(tensors[1])
                 if self.model.use_cuda:
@@ -138,6 +138,10 @@ class Trainer(object):
                 self.optimize(loss)
                 
                 if idx % self.save_freq == 0:
+                    print("batch idx", idx)
+                    end = time.time()
+                    print("time : ", end -start )
+                    start = end
                     print("Varidation Start")
                     val_loss, attention = self.validation()
                     self.save_model(os.path.join(self.save_dir,
@@ -158,7 +162,7 @@ class Trainer(object):
         writer.add_scalar("data/train_loss", train_loss , self.n_iter)
         writer.add_scalar("data/val_loss", val_loss , self.n_iter)
         if attention is not None:
-            writer.add_image("data/attention", attention[0], self.n_iter)
+            writer.add_image("data/attention", attention[0,:,-25:], self.n_iter)
         
     def validation(self):
         losses = []
