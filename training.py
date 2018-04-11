@@ -23,7 +23,7 @@ def main():
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
                                use_cuda=HP.USE_CUDA)
-    lossfn = nn.CrossEntropyLoss()
+    lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
     

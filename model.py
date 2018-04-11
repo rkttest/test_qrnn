@@ -12,8 +12,6 @@ import random
 import numpy as np
 import time
 
-
-
 def xavier_init(model):
     count = 0
     for param in model.parameters():
@@ -221,16 +219,17 @@ class Trainer(object):
 
     def get_loss(self, predict, target):
         length = min(predict.size()[1], target.size()[1])
-        weight = (target != self.model.tokens["PAD"]).data
-        weight = weight.cpu().numpy() #weight = B * M
+        # weight = (target != self.model.tokens["PAD"]).data
+        # weight = weight.cpu().numpy() #weight = B * M
         loss = 0
         for di in range(length):
-            index = np.where(weight[:, di])[0]
-            if index.shape[0] == 0:
-                break
-            index = torch.from_numpy(index)
-            if self.model.use_cuda: index = index.cuda()
-            loss += self.lossfn(predict[index][:,di], target[index][:,di])
+            # index = np.where(weight[:, di])[0]
+            # if index.shape[0] == 0:
+            #     break
+            # index = torch.from_numpy(index)
+            # if self.model.use_cuda: index = index.cuda()
+            # loss += self.lossfn(predict[index][:,di], target[index][:,di])
+            loss += self.lossfn(predict[:,di], target[:,di])
 
         return loss, (di + 1)
     
