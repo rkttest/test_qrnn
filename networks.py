@@ -8,7 +8,7 @@ from torch.nn.functional import dropout
 
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=32,
-                 n_layers=2, dropout_p=0.2, kernel_size=1):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, attention=True):
         
         super(Decoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
@@ -22,6 +22,8 @@ class Decoder(nn.Module):
         self.n_layers = n_layers
         self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
         self.p = dropout_p
+        self.use_attention = attention
+
         
     def forward(self, x, c_init_list, 
                 encoder_out=None, mask=None):
@@ -42,7 +44,7 @@ class Decoder(nn.Module):
             c_out_list.append(c_out)
             
         #このあと attention を加える
-        if encoder_out is not None:
+        if (encoder_out is not None) and self.use_attention:
             # x : 1 * B * H
             # encoder_out : N * B * H
             # mask : B * 1 * N
@@ -56,7 +58,8 @@ class Decoder(nn.Module):
             x_cat = torch.cat([encoder_out, x], dim=2)
             # x (attn_vect) : 1 * B * H
             x = nn.functional.tanh(self.attn_linear(x_cat))
-            
+        else:
+            attn = None
         #probs : 1 * B * DictSize
         probs = self.linear(x)
         #probs = self.softmax(probs, dim=1)
@@ -118,7 +121,7 @@ class Encoder(nn.Module):
 class LSTMDecoder(nn.Module):
 
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, attention=True):
         
         super(LSTMDecoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
@@ -131,6 +134,7 @@ class LSTMDecoder(nn.Module):
         self.p = dropout_p
         self.LSTM = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p)
         self.use_cuda = use_cuda
+        self.use_attention = attention
         
     def forward(self, x, encoder_c, encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
@@ -150,7 +154,7 @@ class LSTMDecoder(nn.Module):
         x, (h_t, c_t) = self.LSTM(x, (h_0, c_0))
             
         #このあと attention を加える
-        if encoder_out is not None:
+        if (encoder_out is not None) and self.use_attention:
             # x : 1 * B * H
             # encoder_out : N * B * H
             # mask : B * 1 * N
@@ -164,7 +168,8 @@ class LSTMDecoder(nn.Module):
             x_cat = torch.cat([encoder_out, x], dim=2)
             # x (attn_vect) : 1 * B * H
             x = nn.functional.tanh(self.attn_linear(x_cat))
-            
+        else:
+            attn = None
         #probs : 1 * B * DictSize
         probs = self.linear(x)
         #probs = self.softmax(probs, dim=1)

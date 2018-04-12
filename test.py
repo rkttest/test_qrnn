@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from optim.adam import Adam
 from torch.utils.data import TensorDataset
 from torch.utils.data.sampler import WeightedRandomSampler
-from model import EncoderDecoder, Trainer
+from model import EncoderDecoder, Trainer, LSTMEncoderDecoder
 from tensorboardX import SummaryWriter
 
 from hyperparam import HP
@@ -18,7 +18,7 @@ sys.path.append("../json")
 from dictionary import WordDict
 
 def main():
-    s2s_model = EncoderDecoder(embedding_size=HP.embedding_size,
+    s2s_model = LSTMEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
@@ -47,9 +47,9 @@ def main():
                       testloader=testloader, epoch=HP.epoch,
                       save_dir="SavedModel/19", save_freq=HP.save_freq)
 
-    model_path = "SavedModel/19/epoch18_batchidx199"
+    model_path = "SavedModel/21/epoch8_batchidx199"
     trainer.model_initialize(model_path)
-    test_out = trainer.test()#target_dist)
+    test_out = trainer.test(target_dist)
 
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))

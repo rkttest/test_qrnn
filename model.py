@@ -30,7 +30,7 @@ class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False):
+                 use_cuda=False, attention=True):
         super(EncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -40,10 +40,11 @@ class EncoderDecoder(nn.Module):
                                hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
         self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,                               
-                               hidden_size=hidden_size, n_layers=n_layers)
+                               hidden_size=hidden_size, n_layers=n_layers, attention=attention)
         self.use_cuda = use_cuda
         self.max_word_len = max_word_len
         self.tokens = tokens
+        self.use_attention = attention
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
@@ -81,7 +82,10 @@ class EncoderDecoder(nn.Module):
         if self.use_cuda:decoder_outseq = decoder_outseq.cuda()
 
         if getattention:
-            attention_out = torch.cat(attention_out, dim=1)
+            if self.use_attention:
+                attention_out = torch.cat(attention_out, dim=1)
+            else:
+                attention_out = None
             return decoder_outseq, attention_out
         return decoder_outseq
 
@@ -102,17 +106,20 @@ class LSTMEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False):
+                 use_cuda=False, attention=True):
         super(LSTMEncoderDecoder, self).__init__()
+        self.embedding = nn.Embedding(n_words, embedding_size,
+                                      padding_idx=None)
+        
         self.encoder = LSTMEncoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
         self.decoder = LSTMDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                               hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
+                                   hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda, attention=attention)
         self.max_word_len = max_word_len
         self.tokens = tokens
-
+        self.use_attention = attention
     
 class Trainer(object):
 
@@ -193,7 +200,7 @@ class Trainer(object):
     def summary_write(self, writer, train_loss, val_loss, attention=None):
         writer.add_scalar("data/train_loss", train_loss , self.n_iter)
         writer.add_scalar("data/val_loss", val_loss , self.n_iter)
-        if attention is not None:
+        if (attention is not None) and self.use_attention:
             writer.add_image("data/attention", attention[0,:,-25:], self.n_iter)
         
     def validation(self):
@@ -231,7 +238,6 @@ class Trainer(object):
                     print("-----------------------------------------")
                     print(" ")
                     
-
                 
             loss, size = self.get_loss(model_out, target)
             losses.append(loss.data[0] / size)

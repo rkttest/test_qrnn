@@ -30,7 +30,8 @@ def main():
                                n_words=HP.n_words,
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
-                               use_cuda=HP.USE_CUDA)
+                                   use_cuda=HP.USE_CUDA,
+                                   attention=HP.use_attention)
     weight = torch.FloatTensor(np.load("../json/weight.npy"))
     lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])#, weight=weight)
     optimizer = Adam(s2s_model.parameters(),
