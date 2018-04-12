@@ -30,7 +30,12 @@ def main():
     lossfn = nn.CrossEntropyLoss()
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-
+    target_dist = np.zeros(HP.n_words)
+    _target_dist = np.load("../json/target_dist.npy")
+    target_dist[:_target_dist.shape[0]] = _target_dist * 1.2
+    target_dist = target_dist.reshape(1, 1, -1)
+    target_dist = torch.from_numpy(target_dist).type(torch.DoubleTensor)
+    
     test_arr = np.load("../json/train.npy")
     test_arr = test_arr.reshape(-1, 2, test_arr.shape[1])[:400,:,:HP.max_word_len]
     test_arr[:,0,:] = test_arr[:,0,::-1]
@@ -40,11 +45,11 @@ def main():
     testloader = DataLoader(test_data, batch_size=HP.batch_size)
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       testloader=testloader, epoch=HP.epoch,
-                      save_dir="SavedModel/18", save_freq=HP.save_freq)
+                      save_dir="SavedModel/19", save_freq=HP.save_freq)
 
-    model_path = "SavedModel/18/epoch10_batchidx199"
+    model_path = "SavedModel/19/epoch18_batchidx199"
     trainer.model_initialize(model_path)
-    test_out = trainer.test()
+    test_out = trainer.test()#target_dist)
 
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))
@@ -59,6 +64,7 @@ def main():
             input_sentence = wd.indexlist2sentence(inseq[batch][::-1])
             target_sentence = wd.indexlist2sentence(target[batch])
             model_sentence = wd.indexlist2sentence(model_out[batch])
+            
             print("-----------------------------------------")
             print("> ", input_sentence)
             print("= ", target_sentence)

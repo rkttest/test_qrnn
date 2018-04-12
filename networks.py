@@ -113,6 +113,105 @@ class Encoder(nn.Module):
         hidden = Variable(torch.rand(batch_size, dim) * 0.01) 
         if self.use_cuda: hidden = hidden.cuda()
         return hidden
+
+
+class LSTMDecoder(nn.Module):
+
+    def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False):
+        
+        super(LSTMDecoder, self).__init__()
+        self.linear = nn.Linear(hidden_size, dict_size)
+        self.softmax = nn.functional.softmax
+        self.embed = embedding
+        self.hidden_size = hidden_size
+        self.attention = Attention(self.hidden_size)
+        self.n_layers = n_layers
+        self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
+        self.p = dropout_p
+        self.LSTM = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p)
+        self.use_cuda = use_cuda
+        
+    def forward(self, x, encoder_c, encoder_out=None, mask=None):
+        # M word から 次の 1 word の（条件付き)確率分布を生成する
+
+        # x :1文字の入力ベクトル : 1 * B 
+        # x : B -> 1 * B * E
+        self.batch_size = x.size()[0]
+        h_0, c_0 = encoder_c
+        x = self.embed(x)
+
+        # add dropout
+        x = dropout(x, p=self.p, training=True)
+
+
+        # x : 1 * B * E
+        # h_0, c_0 : nlayer * B * H
+        x, (h_t, c_t) = self.LSTM(x, (h_0, c_0))
+            
+        #このあと attention を加える
+        if encoder_out is not None:
+            # x : 1 * B * H
+            # encoder_out : N * B * H
+            # mask : B * 1 * N
+            # attn : B * 1 * N
+            attn = self.attention(encoder_out, x, mask)
+
+            # encoder_out : N * B * H -> 1 * B * H
+            encoder_out = torch.bmm(attn,
+                                    encoder_out.transpose(0, 1)).transpose(0, 1)
+            # x_cat : 1 * B * 2H
+            x_cat = torch.cat([encoder_out, x], dim=2)
+            # x (attn_vect) : 1 * B * H
+            x = nn.functional.tanh(self.attn_linear(x_cat))
+            
+        #probs : 1 * B * DictSize
+        probs = self.linear(x)
+        #probs = self.softmax(probs, dim=1)
+
+        # c_out_list : list(B * H), listlen=n_layers
+        
+        return probs, (h_t, c_t), attn
+
+    
+class LSTMEncoder(nn.Module):
+    def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False):
+        super(LSTMEncoder, self).__init__()
+        self.embed = embedding
+        self.hidden_size = hidden_size
+        self.n_layers = n_layers
+        self.hidden_dims = [hidden_size] * n_layers 
+        torch.manual_seed(1)
+        self.use_cuda = use_cuda
+        if self.use_cuda:torch.cuda.manual_seed_all(1)
+        self.p = dropout_p
+        self.LSTM = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p)
+        
+    def forward(self, x):
+        # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
+        # init_c : Qrnn の初期値(t = -1 の値) : B * E (n=0), B * H (n > 0) : n_layerl分
+        self.batch_size = x.size()[0]
+        h_0, c_0 = self.init_hidden()
+
+        # x : B * N -> N * B * E (E : Embedding dim)
+        x = self.embed(x).transpose(0, 1)
+
+        # add dropout
+        x = dropout(x, p=self.p)
+        x, (h_t, c_t) = self.LSTM(x, (h_0, c_0))        
+
+        return x, (h_t, c_t)
+    
+    def init_hidden(self):
+        h_0 = torch.FloatTensor(self.n_layers, self.batch_size, self.hidden_size)
+        c_0 = torch.FloatTensor(self.n_layers, self.batch_size, self.hidden_size)
+        h_0.uniform_(0.1)
+        c_0.uniform_(0.1)
+        if self.use_cuda:
+            h_0 = h_0.cuda()
+            c_0 = c_0.cuda()
+        return Variable(h_0), Variable(c_0)
     
             
 if __name__=="__main__":
@@ -125,10 +224,11 @@ if __name__=="__main__":
     Y = Variable(torch.from_numpy(Y))
     Sos = Variable(torch.zeros(20, 1).type(torch.LongTensor))
     print("X, Y size", X.size(), Y.size())
+    emb = nn.Embedding(60, 64)
+    encoder = LSTMEncoder(embedding=emb)
+    decoder = LSTMDecoder(embedding=emb)
 
-    encoder = Encoder()
-    decoder = Decoder()
-
+    z = Variable(torch.FloatTensor(2, 20, 64))
     encoder_out, encoder_c = encoder(X)
     print("len enc c", len(encoder_c))
     probs, c_out, attn = decoder(Sos,encoder_c, encoder_out=encoder_out)
