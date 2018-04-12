@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 from qrnn import QRNN, Attention
+from torch.nn.functional import dropout
 
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=32,
@@ -20,7 +21,8 @@ class Decoder(nn.Module):
         self.attention = Attention(self.hidden_size)
         self.n_layers = n_layers
         self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
-
+        self.p = dropout_p
+        
     def forward(self, x, c_init_list, 
                 encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
@@ -28,12 +30,17 @@ class Decoder(nn.Module):
         # x :1文字の入力ベクトル : 1 * B 
         # x : B -> 1 * B * E
         x = self.embed(x)
+
+        # add dropout
+        x = dropout(x, p=self.p, training=True)
         c_out_list = []
         for n in range(self.n_layers):
             # x : 1 * B * E (or H) -> 1 * B * E
             # c_out -> B * H
             x, c_out = self.qrnn_list[n](x, c_init_list[n])
-            c_out_list.append(c_out) 
+            x = dropout(x, p=self.p, training=True)            
+            c_out_list.append(c_out)
+            
         #このあと attention を加える
         if encoder_out is not None:
             # x : 1 * B * H
@@ -47,7 +54,6 @@ class Decoder(nn.Module):
                                     encoder_out.transpose(0, 1)).transpose(0, 1)
             # x_cat : 1 * B * 2H
             x_cat = torch.cat([encoder_out, x], dim=2)
-
             # x (attn_vect) : 1 * B * H
             x = nn.functional.tanh(self.attn_linear(x_cat))
             
@@ -74,6 +80,7 @@ class Encoder(nn.Module):
         torch.manual_seed(1)
         self.use_cuda = use_cuda
         if self.use_cuda:torch.cuda.manual_seed_all(1)
+        self.p = dropout_p
         
     def forward(self, x):
         # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
@@ -83,12 +90,20 @@ class Encoder(nn.Module):
 
         # x : B * N -> N * B * E (E : Embedding dim)
         x = self.embed(x).transpose(0, 1)
+
+        # add dropout
+        x = dropout(x, p=self.p)
+        
         c_out_list = []
 
         for n in range(self.n_layers):
             # n = 0 : x : N*B*E, init_c : B*H
             # n > 0 : x : N*B*H, init_c : B*H
             x, c_out = self.qrnn_list[n](x, init_c[n])
+
+            # add dropout
+            x = dropout(x, p=self.p)
+
             c_out_list.append(c_out)
 
         # c_out_list : list(B*H), listlen=n_layers
