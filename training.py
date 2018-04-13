@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from optim.adam import Adam
 from torch.utils.data import TensorDataset
 from torch.utils.data.sampler import WeightedRandomSampler
-from model import EncoderDecoder, Trainer, LSTMEncoderDecoder
+from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder
 from tensorboardX import SummaryWriter
 
 from hyperparam import HP
@@ -25,15 +25,14 @@ def main():
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))
     
-    s2s_model = LSTMEncoderDecoder(embedding_size=HP.embedding_size,
+    s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
                                n_words=HP.n_words,
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
-                                use_cuda=HP.USE_CUDA,
-                                   attention=HP.use_attention)
+                                  use_cuda=HP.USE_CUDA, attention=HP.use_attention)
 
     print("Model", s2s_model)
 
@@ -45,8 +44,8 @@ def main():
     with open("../json/textlist.pkl", "rb") as f:
         import pickle
         textdata = pickle.load(f)
-    train_data = textdata[:(len(textdata)//10)*8]
-    val_data = textdata[(len(textdata)//10)*8:]
+    train_data = textdata[:40]#(len(textdata)//10)*8]
+    val_data = train_data#textdata[(len(textdata)//10)*8:]
     val_data = val_data[:400]
 
     np.random.shuffle(train_data)
@@ -62,7 +61,7 @@ def main():
                       dictionary=wd, teacher_forcing_ratio=0.9)
     
     #shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
-    writer = SummaryWriter()
+    #writer = SummaryWriter()
     trainer.model_initialize()#os.path.join(HP.save_dir,"epoch17_batchidx199"))
     #
     trainer.train()#writer)

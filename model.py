@@ -1,6 +1,6 @@
 []#coding:utf-8
 import os, sys
-from networks import Encoder, Decoder, LSTMEncoder, LSTMDecoder
+from networks import Encoder, Decoder, LSTMEncoder, LSTMDecoder, GRUEncoder, GRUDecoder
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -127,6 +127,28 @@ class LSTMEncoderDecoder(EncoderDecoder):
         self.tokens = tokens
         self.use_attention = attention
         self.bidirectional = bidirectional
+
+class GRUEncoderDecoder(EncoderDecoder):
+    def __init__(self, embedding_size=128, hidden_size=256,
+                 n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
+                 tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
+                 use_cuda=False, attention=True, bidirectional=False):
+        super(GRUEncoderDecoder, self).__init__()
+        self.embedding = nn.Embedding(n_words, embedding_size,
+                                      padding_idx=None)
+        
+        self.encoder = GRUEncoder(dict_size=n_words, embedding=self.embedding,
+                               embedding_size=embedding_size,
+                                   hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda, bidirectional=bidirectional)
+        self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
+                               embedding_size=embedding_size,
+                                   hidden_size=hidden_size, n_layers=n_layers,
+                                   use_cuda=use_cuda, attention=attention)
+        self.max_word_len = max_word_len
+        self.tokens = tokens
+        self.use_attention = attention
+        self.bidirectional = bidirectional
+
         
 class Trainer(object):
 
