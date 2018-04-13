@@ -113,7 +113,7 @@ class Encoder(nn.Module):
         return x, c_out_list
 
     def init_hidden(self, batch_size=50, dim=64):
-        hidden = Variable(torch.rand(batch_size, dim) * 0.01) 
+        hidden = Variable(torch.rand(batch_size, dim) * 0.001) 
         if self.use_cuda: hidden = hidden.cuda()
         return hidden
 
@@ -128,14 +128,17 @@ class LSTMDecoder(nn.Module):
         self.softmax = nn.functional.softmax
         self.embed = embedding
         self.hidden_size = hidden_size
-        self.attention = Attention(self.hidden_size)
         self.n_layers = n_layers
-        self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
+        
         self.p = dropout_p
-        self.LSTM = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p)
+        self.LSTM = nn.LSTM(input_size=embedding_size,
+                            hidden_size=self.hidden_size, num_layers=self.n_layers,
+                            dropout=self.p)
         self.use_cuda = use_cuda
         self.use_attention = attention
-        
+        if self.use_attention:
+            self.attention = Attention(self.hidden_size)            
+            self.attn_linear = nn.Linear(hidden_size*2, hidden_size)            
     def forward(self, x, encoder_c, encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
 
@@ -143,6 +146,7 @@ class LSTMDecoder(nn.Module):
         # x : B -> 1 * B * E
         self.batch_size = x.size()[0]
         h_0, c_0 = encoder_c
+
         x = self.embed(x)
 
         # add dropout
@@ -181,7 +185,7 @@ class LSTMDecoder(nn.Module):
     
 class LSTMEncoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, bidirectional=False):
         super(LSTMEncoder, self).__init__()
         self.embed = embedding
         self.hidden_size = hidden_size
@@ -191,7 +195,8 @@ class LSTMEncoder(nn.Module):
         self.use_cuda = use_cuda
         if self.use_cuda:torch.cuda.manual_seed_all(1)
         self.p = dropout_p
-        self.LSTM = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p)
+        self.LSTM = nn.LSTM(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
+        self.bidirectional = bidirectional
         
     def forward(self, x):
         # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
@@ -209,10 +214,11 @@ class LSTMEncoder(nn.Module):
         return x, (h_t, c_t)
     
     def init_hidden(self):
-        h_0 = torch.FloatTensor(self.n_layers, self.batch_size, self.hidden_size)
-        c_0 = torch.FloatTensor(self.n_layers, self.batch_size, self.hidden_size)
-        h_0.uniform_(0.1)
-        c_0.uniform_(0.1)
+        bidirection = 2 if self.bidirectional else 1
+        h_0 = torch.FloatTensor(self.n_layers*bidirection, self.batch_size, self.hidden_size)
+        c_0 = torch.FloatTensor(self.n_layers*bidirection, self.batch_size, self.hidden_size)
+        h_0.uniform_(-0.001, 0.001)
+        c_0.uniform_(-0.001, 0.001)
         if self.use_cuda:
             h_0 = h_0.cuda()
             c_0 = c_0.cuda()
