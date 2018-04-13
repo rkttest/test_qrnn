@@ -58,7 +58,7 @@ def main():
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       trainloader=trainloader, epoch=HP.epoch,
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq,
-                      dictionary=wd, teacher_forcing_ratio=0.9)
+                      dictionary=wd, teacher_forcing_ratio=0.5)
     
     #shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
     #writer = SummaryWriter()
