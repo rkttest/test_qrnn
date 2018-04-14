@@ -88,14 +88,15 @@ class Attention(nn.Module):
         #mask = B * 1 * N
 
         #input_encode : N * B * H -> B * H * N
-        input_encode = input_encode.transpose(0, 1).transpose(1, 2)
+
 
         #target_encode : 1 * B * H -> B * 1 * H
-        target_encode = self.linear_score(target_encode)
-        target_encode = target_encode.transpose(0, 1)
         
         #tmp = torch.cat([input_encode, target_encode], dim=2)
         #matrix : B * 1 * N
+        input_encode = input_encode.transpose(0, 1).transpose(1, 2)            
+        target_encode = self.linear_score(target_encode)
+        target_encode = target_encode.transpose(0, 1)
         matrix = torch.bmm(target_encode, input_encode)
         #matrix -= matrix.mean(dim=2).unsqueeze(2)
         #matrix = (matrix ** 2).sqrt()

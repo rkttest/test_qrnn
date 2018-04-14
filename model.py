@@ -1,6 +1,6 @@
 #coding:utf-8
 import os, sys
-from networks import Encoder, Decoder
+from networks import Encoder, Decoder, LSTMEncoder, LSTMDecoder
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -23,12 +23,12 @@ def xavier_init(model):
     print("--------total----------")
     print(count)
 
-
+        
 class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False):
+                 use_cuda=False, attention=True):
         super(EncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -38,10 +38,11 @@ class EncoderDecoder(nn.Module):
                                hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
         self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,                               
-                               hidden_size=hidden_size, n_layers=n_layers)
+                               hidden_size=hidden_size, n_layers=n_layers, attention=attention)
         self.use_cuda = use_cuda
         self.max_word_len = max_word_len
         self.tokens = tokens
+        self.use_attention = attention
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
@@ -56,7 +57,7 @@ class EncoderDecoder(nn.Module):
         decoder_outlist = []
         attention_out = []
 
-        for di in range(self.max_word_len):
+        for di in range(self.max_word_len-1):
             pad_eos_num = (decoder_input.data == self.tokens["PAD"]).sum() +\
                           (decoder_input.data == self.tokens["EOS"]).sum()
             if pad_eos_num >= batch_size:
@@ -79,7 +80,10 @@ class EncoderDecoder(nn.Module):
         if self.use_cuda:decoder_outseq = decoder_outseq.cuda()
 
         if getattention:
-            attention_out = torch.cat(attention_out, dim=1)
+            if self.use_attention:
+                attention_out = torch.cat(attention_out, dim=1)
+            else:
+                attention_out = None
             return decoder_outseq, attention_out
         return decoder_outseq
 
@@ -95,13 +99,31 @@ class EncoderDecoder(nn.Module):
                                                  encoder_out=encoder_out,
                                                  mask=mask)
         return decoder_out, attention
+
+class LSTMEncoderDecoder(EncoderDecoder):
+    def __init__(self, embedding_size=128, hidden_size=256,
+                 n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
+                 tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
+                 use_cuda=False, attention=True):
+        super(LSTMEncoderDecoder, self).__init__()
+        self.embedding = nn.Embedding(n_words, embedding_size,
+                                      padding_idx=None)
         
+        self.encoder = LSTMEncoder(dict_size=n_words, embedding=self.embedding,
+                               embedding_size=embedding_size,
+                               hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
+        self.decoder = LSTMDecoder(dict_size=n_words, embedding=self.embedding,
+                               embedding_size=embedding_size,
+                                   hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda, attention=attention)
+        self.max_word_len = max_word_len
+        self.tokens = tokens
+        self.use_attention = attention
     
 class Trainer(object):
 
     def __init__(self, model, optimizer, lossfn, trainloader=None,
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
-                 teacher_forcing_ratio=0.5, epoch=10, save_freq=1000):
+                 teacher_forcing_ratio=0.5, epoch=10, save_freq=1000, dictionary=None, target_dist=None):
         self.model = model
         self.optim = optimizer
         self.lossfn = lossfn
@@ -115,6 +137,8 @@ class Trainer(object):
         self.save_freq = save_freq
         self.epoch = epoch
         self.n_iter = 0
+        self.dictionary = dictionary
+        self.target_dist = None
         np.random.seed(1)
         torch.manual_seed(1)
         if self.model.use_cuda:
@@ -143,10 +167,10 @@ class Trainer(object):
                     target = target.cuda()
                     
                 if np.random.rand() < self.teacher_forcing_ratio:
-                    model_out = self.model.forward(x, target=target)
+                    model_out = self.model.forward(x, target=target[:,1:])
                 else:
                     model_out = self.model.forward(x)
-                loss, size = self.get_loss(model_out, target)
+                loss, size = self.get_loss(model_out, target[:,1:])
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
 
@@ -177,7 +201,7 @@ class Trainer(object):
     def summary_write(self, writer, train_loss, val_loss, attention=None):
         writer.add_scalar("data/train_loss", train_loss , self.n_iter)
         writer.add_scalar("data/val_loss", val_loss , self.n_iter)
-        if attention is not None:
+        if (attention is not None):
             writer.add_image("data/attention", attention[0,:,-25:], self.n_iter)
         
     def validation(self):
@@ -190,12 +214,38 @@ class Trainer(object):
                 target = target.cuda()
             
             model_out, attention = self.model.forward(x, getattention=True)
+            probs = nn.functional.softmax(model_out, dim=2)
+            if self.target_dist is not None:
+                target_dist = self.target_dist.type(type(probs.data))
+                topk, topi = (probs.data - target_dist).topk(3)
+            else:
+                topk, topi = probs.data.topk(3)
             loss, size = self.get_loss(model_out, target)
             losses.append(loss.data[0] / size)
+
+            if (self.dictionary is not None) and (idx == 0):
+                model_seq = topi.cpu().numpy()[5:10,:,0]
+                in_seq = x.data.cpu().numpy()[5:10]
+                target_seq = target.data.cpu().numpy()[5:10]
+                batchsize = model_seq.shape[0]
+                
+                for batch in range(batchsize):
+                    input_sentence = self.dictionary.indexlist2sentence(in_seq[batch][::-1])
+                    target_sentence = self.dictionary.indexlist2sentence(target_seq[batch])
+                    model_sentence = self.dictionary.indexlist2sentence(model_seq[batch])
+
+                    print("-----------------------------------------")
+                    print("> ", input_sentence)
+                    print("= ", target_sentence)
+                    print("< ", model_sentence)
+                    print("-----------------------------------------")
+                    print(" ")
+                    
+                
         return np.mean(losses), attention
 
     
-    def test(self):
+    def test(self, target_dist=None):
         test_out = []
         
         for idx, tensors in enumerate(self.testloader):
@@ -207,7 +257,11 @@ class Trainer(object):
             
             model_out = self.model.forward(x)
             probs = nn.functional.softmax(model_out, dim=2)
-            topk, topi = probs.data.topk(3)
+            if target_dist is not None:
+                target_dist = target_dist.type(type(probs.data))
+                topk, topi = (probs.data - target_dist).topk(3)
+            else:
+                topk, topi = probs.data.topk(3)
             
             test_out.append([topi.cpu().numpy()[:,:,0], x.data.cpu().numpy(),
                             target.data.cpu().numpy()])
