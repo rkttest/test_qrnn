@@ -13,21 +13,22 @@ from optim.adam import Adam
 from torch.utils.data import TensorDataset
 from torch.utils.data.sampler import WeightedRandomSampler
 from optim.lr_scheduler import MultiStepLR
-from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder
+from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder, BeamEncoderDecoder
 from tensorboardX import SummaryWriter
 
 from hyperparam import HP
-sys.path.append("../../src")
-from wordsdictionary import simpleWordDict, ssWordDict
-
+#sys.path.append("../../src")
+sys.path.append("../json/")
+from dictionary import WordDict
+#from wordsdictionary import simpleWordDict
+#, ssWordDict
 
 
 def main():
-
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))
     
-    s2s_model = LSTMEncoderDecoder(embedding_size=HP.embedding_size,
+    s2s_model = BeamEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
@@ -42,7 +43,7 @@ def main():
     # s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
     
     #weight = torch.FloatTensor(np.load("../../TrainData/dict_weight.npy"))
-    sampling_weight = np.load("../../Dictionary/sampling_weight.npy")
+    #sampling_weight = np.load("../../Dictionary/sampling_weight.npy")
     #if HP.USE_CUDA: weight = weight.cuda()
     #lossfn = nn.CrossEntropyLoss(weight=weight, ignore_index=HP.tokens["PAD"])
     lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])
@@ -73,14 +74,16 @@ def main():
     print("Model", s2s_model)
 
     #weight = torch.FloatTensor(np.load("../json/weight.npy"))
-    with open("../../Dictionary/filteredlist.pkl", "rb") as f:
+    #with open("../../Dictionary/filteredlist.pkl", "rb") as f:
+    with open("../json/textlist.pkl", "rb") as f:        
         import pickle
         textdata = pickle.load(f)
     train_data = textdata[:(len(textdata)//10)*8]
-    sampling_weight = sampling_weight[:(len(textdata)//10)*8]
+    #sampling_weight = sampling_weight[:(len(textdata)//10)*8]
+    sampling_weight = np.ones(len(train_data))
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*8:]
-    val_data = val_data[:1000]
+    val_data = val_data[:100]
 
     #np.random.shuffle(train_data)
 
@@ -94,7 +97,8 @@ def main():
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       trainloader=trainloader, epoch=HP.epoch,
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq,
-                      dictionary=wd, teacher_forcing_ratio=0.5, scheduler=scheduler)
+                      dictionary=wd, teacher_forcing_ratio=0.5, scheduler=scheduler,
+                      beam_search=True)
     
     #shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
     #writer = SummaryWriter()

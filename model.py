@@ -9,7 +9,14 @@ from torch.nn.init import xavier_uniform, kaiming_uniform, xavier_normal
 import torch.nn.functional as F
 from optim.adam import Adam
 import random
+
+from seq2seq.models.DecoderRNN import DecoderRNN
+from seq2seq.models.EncoderRNN import EncoderRNN
+from seq2seq.models.TopKDecoder import TopKDecoder
+
+
 import numpy as np
+np.random.seed(1)
 import time
 
 def xavier_init(model):
@@ -22,7 +29,7 @@ def xavier_init(model):
 
     print("--------total----------")
     print(count)
-
+    
         
 class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
@@ -93,19 +100,47 @@ class EncoderDecoder(nn.Module):
             return decoder_outseq, attention_out
         return decoder_outseq
 
-    def word_forward(x, decoder_input, target=None, getattention=False):
-        encoder_out, encoder_c = self.encoder(x)
-        decoder_c = encoder_c
-        mask = (x == 0).unsqueeze(1).data
-        if self.use_cuda:
-            decoder_input=decoder_input.cuda()
-            mask = mask.cuda()
-                        
-        decoder_out, _, attention = self.decoder(decoder_input, decoder_c,
-                                                 encoder_out=encoder_out,
-                                                 mask=mask)
-        return decoder_out, attention
 
+class BeamEncoderDecoder(nn.Module):
+    def __init__(self, embedding_size=128, hidden_size=256,
+                 n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
+                 tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
+                 use_cuda=False, attention=True, bidirectional=False,
+                 beam_search=True, topk=3):
+        super(BeamEncoderDecoder, self).__init__()
+        self.topk = topk
+        self.embedding = nn.Embedding(n_words, hidden_size,
+                                      padding_idx=None)
+        self.encoder = EncoderRNN(n_words, max_word_len, hidden_size, n_layers=n_layers,
+                                  dropout_p=dropout_p, input_dropout_p=dropout_p)
+        self.decoder = DecoderRNN(n_words, max_word_len-1, hidden_size, n_layers=n_layers,
+                                  sos_id=tokens["SOS"], eos_id=tokens["EOS"],
+                                  dropout_p=dropout_p, input_dropout_p=dropout_p,
+                                  use_attention=True)
+        self.topk_decoder = TopKDecoder(self.decoder, self.topk, )
+        self.encoder.embedding = self.embedding        
+        self.decoder.embedding = self.embedding
+        self.use_cuda = use_cuda
+        
+    def forward(self, x, target=None, getattention=False):
+        encoder_out, encoder_c = self.encoder(x)
+        if target is None:
+            decoder_outputs, decoder_c, attn = self.topk_decoder(encoder_outputs=encoder_out,
+                                                           encoder_hidden=encoder_c)
+        else:
+            decoder_outputs, decoder_c, attn = self.decoder(inputs=target,
+                                                         encoder_outputs=encoder_out,
+                                                         encoder_hidden=encoder_c)
+            
+        if getattention:
+            if self.use_attention:
+                attention_out = torch.stack(attn[DecoderRNN.KEY_ATTN_SCORE][0])[:,0,0]
+            else:
+                attention_out = None
+            return decoder_outputs, attention_out
+        return torch.stack(decoder_outputs, dim=1)
+   
+        
 class LSTMEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
@@ -155,7 +190,7 @@ class Trainer(object):
     def __init__(self, model, optimizer, lossfn, trainloader=None,
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
                  teacher_forcing_ratio=0.5, epoch=10, save_freq=1000,
-                 dictionary=None, target_dist=None, scheduler=None):
+                 dictionary=None, target_dist=None, scheduler=None, beam_search=False):
         self.model = model
         self.optim = optimizer
         self.lossfn = lossfn
@@ -172,6 +207,7 @@ class Trainer(object):
         self.dictionary = dictionary
         self.target_dist = None
         self.scheduler = scheduler
+        self.beam_search = beam_search
         np.random.seed(1)
         torch.manual_seed(1)
         if self.model.use_cuda:
@@ -203,15 +239,14 @@ class Trainer(object):
                 if self.model.use_cuda:
                     x = x.cuda()
                     target = target.cuda()
-                    
-                if np.random.rand() < self.teacher_forcing_ratio:
-                    model_out = self.model.forward(x, target=target[:,1:])
+
+                if np.random.random() < self.teacher_forcing_ratio:
+                    model_out = self.model.forward(x, target) 
                 else:
-                    model_out = self.model.forward(x)
+                    model_out = self.model.forward(x)    
                 loss, size = self.get_loss(model_out, target[:,1:])
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
-
 
                 if (idx+1) % self.save_freq == 0:
                     print("batch idx", idx)

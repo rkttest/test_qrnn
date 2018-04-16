@@ -83,7 +83,7 @@ class Attention(nn.Module):
         if self.type == "Bahdanau":
             self.enc_linear = nn.Linear(hidden_size, hidden_size//2)
             self.dec_linear = nn.Linear(hidden_size, hidden_size//2)
-            self.vect_linear = nn.Linear(hidden_size, 1)
+            self.vect_linear = nn.Linear(hidden_size//2, 1)
         else:
             self.linear_score = nn.Linear(hidden_size, hidden_size)            
     def forward(self, input_encode, target_encode, mask=None):
