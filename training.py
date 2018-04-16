@@ -25,7 +25,7 @@ def main():
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))
     
-    s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
+    s2s_model = LSTMEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
