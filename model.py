@@ -35,7 +35,7 @@ class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True):
+                 use_cuda=False, attention=True, bidirectional=False):
         super(EncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -45,11 +45,13 @@ class EncoderDecoder(nn.Module):
                                hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
         self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,                               
-                               hidden_size=hidden_size, n_layers=n_layers, attention=attention)
+                               hidden_size=hidden_size,
+                               n_layers=n_layers, attention=attention)
         self.use_cuda = use_cuda
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention
+        self.bidirectional = bidirectional
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
@@ -57,6 +59,9 @@ class EncoderDecoder(nn.Module):
         encoder_out, encoder_c = self.encoder(x)
         decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
         decoder_c = encoder_c
+        if self.bidirectional:
+            size = encoder_c.size()
+            encoder_c = encoder_c.view(2, size[0]//2, size[1], size[2]).sum(dim=1)
         if type(decoder_c) == tuple:
             decoder_c = list(encoder_c)
             decoder_c[1] = Variable(torch.zeros(encoder_c[1].size()))
@@ -177,8 +182,10 @@ class GRUEncoderDecoder(EncoderDecoder):
                                   use_cuda=use_cuda, bidirectional=bidirectional)
         self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                                   hidden_size=hidden_size, n_layers=n_layers,
-                                   use_cuda=use_cuda, attention=attention)
+                                   hidden_size=hidden_size,
+                                  n_layers=n_layers,
+                                   use_cuda=use_cuda,
+                                  attention=attention, bidirectional=bidirectional)
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention

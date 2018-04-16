@@ -229,7 +229,8 @@ class LSTMEncoder(nn.Module):
 class GRUDecoder(nn.Module):
 
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, attention=True):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False,
+                 attention=True, bidirectional=False):
         
         super(GRUDecoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
@@ -245,8 +246,10 @@ class GRUDecoder(nn.Module):
         self.use_cuda = use_cuda
         self.use_attention = attention
         if self.use_attention:
-            self.attention = Attention(self.hidden_size)            
-            self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
+            bidirectional_scale = 1 if bidirectional else 0
+            self.attention = Attention(self.hidden_size, bidirectional=bidirectional)            
+            self.attn_linear = nn.Linear(hidden_size*2 + hidden_size*bidirectional_scale,
+                                         hidden_size)
             
     def forward(self, x, encoder_c, encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する

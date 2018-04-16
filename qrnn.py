@@ -75,17 +75,17 @@ class QRNN(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden_size=64, attn_type="Bahdanau"):
+    def __init__(self, hidden_size=64, attn_type="Bahdanau", bidirectional=False):
         super(Attention, self).__init__()
         self.softmax = nn.functional.softmax
         self.type = attn_type
-        
+        bidirectional_scale = 2 if bidirectional else 1        
         if self.type == "Bahdanau":
-            self.enc_linear = nn.Linear(hidden_size, hidden_size//2)
+            self.enc_linear = nn.Linear(hidden_size*bidirectional_scale, hidden_size//2)
             self.dec_linear = nn.Linear(hidden_size, hidden_size//2)
             self.vect_linear = nn.Linear(hidden_size//2, 1)
         else:
-            self.linear_score = nn.Linear(hidden_size, hidden_size)            
+            self.linear_score = nn.Linear(hidden_size*bidirectional_scale, hidden_size)            
     def forward(self, input_encode, target_encode, mask=None):
         #input_encode = N * B * H
         #target_encode = 1 * B * H
