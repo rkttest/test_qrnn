@@ -12,16 +12,18 @@ from torch.utils.data import DataLoader
 from optim.adam import Adam
 from torch.utils.data import TensorDataset
 from torch.utils.data.sampler import WeightedRandomSampler
+from optim.lr_scheduler import MultiStepLR
 from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder
 from tensorboardX import SummaryWriter
 
 from hyperparam import HP
+sys.path.append("../../src")
+from wordsdictionary import simpleWordDict, ssWordDict
 
-sys.path.append("../json")
-from dictionary import WordDict
 
 
 def main():
+
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))
     
@@ -32,33 +34,67 @@ def main():
                                n_words=HP.n_words,
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
-                                  use_cuda=HP.USE_CUDA, attention=HP.use_attention)
+                               use_cuda=HP.USE_CUDA,
+                               attention=HP.use_attention)
 
+    # #wd = simpleWordDict("../../Dictionary/datum/reshape_merged_dict.csv")    
+    # wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
+    # s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
+    
+    #weight = torch.FloatTensor(np.load("../../TrainData/dict_weight.npy"))
+    sampling_weight = np.load("../../Dictionary/sampling_weight.npy")
+    #if HP.USE_CUDA: weight = weight.cuda()
+    #lossfn = nn.CrossEntropyLoss(weight=weight, ignore_index=HP.tokens["PAD"])
+    lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])
+
+    optimizer = Adam(s2s_model.parameters(),
+                     lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
+    scheduler = MultiStepLR(optimizer, milestones=[5, 10, 15], gamma=0.5)
+    
+    # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
+    # train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])[:,:,:HP.max_word_len+1]
+    # train_arr[:,0,:] = train_arr[:,0,::-1]
+
+    # train_arr = torch.from_numpy(train_arr)
+    # weight = np.ones(train_arr.size()[0])
+    # weight = weight / weight.sum()
+    # val_arr = np.load("../../TrainData/corpus_val_merged.npy")
+    # val_arr = val_arr.reshape(-1, 2, val_arr.shape[1])[:1000,:,:HP.max_word_len+1]
+    # val_arr[:,0,:] = val_arr[:,0,::-1]
+    # val_arr = torch.from_numpy(val_arr)
+
+    # train_data = TensorDataset(train_arr[:,0,:-1], train_arr[:,1])
+    
+    # val_data = TensorDataset(val_arr[:,0,:-1], val_arr[:,1])
+    # trainloader = DataLoader(train_data, batch_size=HP.batch_size,
+    #                          sampler=WeightedRandomSampler(weight,
+    #                                                        num_samples=train_arr.size()[0]))
+    # valloader = DataLoader(val_data, batch_size=HP.batch_size)
     print("Model", s2s_model)
 
     #weight = torch.FloatTensor(np.load("../json/weight.npy"))
-    lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])#, weight=weight)
-    optimizer = Adam(s2s_model.parameters(),
-                     lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-
-    with open("../json/textlist.pkl", "rb") as f:
+    with open("../../Dictionary/filteredlist.pkl", "rb") as f:
         import pickle
         textdata = pickle.load(f)
-    train_data = textdata[:40]#(len(textdata)//10)*8]
-    val_data = train_data#textdata[(len(textdata)//10)*8:]
-    val_data = val_data[:400]
+    train_data = textdata[:(len(textdata)//10)*8]
+    sampling_weight = sampling_weight[:(len(textdata)//10)*8]
+    sampling_weight = sampling_weight / sampling_weight.sum()
+    val_data = textdata[(len(textdata)//10)*8:]
+    val_data = val_data[:1000]
 
-    np.random.shuffle(train_data)
+    #np.random.shuffle(train_data)
 
     print("train_size", len(train_data))
     print("val_size", len(val_data))
-    trainloader = DataLoader(train_data, batch_size=HP.batch_size, collate_fn=collate_fn)
+    trainloader = DataLoader(train_data, batch_size=HP.batch_size, collate_fn=collate_fn,
+                             sampler=WeightedRandomSampler(sampling_weight,
+                                                               num_samples=len(train_data)))
     valloader = DataLoader(val_data, batch_size=HP.batch_size, collate_fn=collate_fn)
     
     trainer = Trainer(model=s2s_model, optimizer=optimizer, lossfn=lossfn,
                       trainloader=trainloader, epoch=HP.epoch,
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq,
-                      dictionary=wd, teacher_forcing_ratio=0.5)
+                      dictionary=wd, teacher_forcing_ratio=0.5, scheduler=scheduler)
     
     #shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
     #writer = SummaryWriter()
@@ -73,15 +109,14 @@ def collate_fn(sample):
 
     max_src_len = max([len(s) for s in src])
     max_tar_len = max([len(s) for s in tar])
-    PAD = 0
+    PAD = HP.tokens["PAD"]
     src = [s + [PAD] * (max_src_len - len(s)) for s in src]
     tar = [s + [PAD] * (max_tar_len - len(s)) for s in tar]
 
     src = [s[::-1] for s in src]
-    
-    src = torch.LongTensor(src)
-    tar = torch.LongTensor(tar)
-    use_cuda = False
+    src = torch.from_numpy(np.array(src))
+    tar = torch.from_numpy(np.array(tar))
+    use_cuda = HP.USE_CUDA
     if use_cuda:
         src = src.cuda()
         tar = tar.cuda()

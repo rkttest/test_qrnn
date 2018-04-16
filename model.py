@@ -1,4 +1,4 @@
-[]#coding:utf-8
+#coding:utf-8
 import os, sys
 from networks import Encoder, Decoder, LSTMEncoder, LSTMDecoder, GRUEncoder, GRUDecoder
 import torch
@@ -23,8 +23,6 @@ def xavier_init(model):
     print("--------total----------")
     print(count)
 
-
-
         
 class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
@@ -48,6 +46,7 @@ class EncoderDecoder(nn.Module):
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
+
         encoder_out, encoder_c = self.encoder(x)
         decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
         decoder_c = encoder_c
@@ -139,7 +138,8 @@ class GRUEncoderDecoder(EncoderDecoder):
         
         self.encoder = GRUEncoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                                   hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda, bidirectional=bidirectional)
+                                   hidden_size=hidden_size, n_layers=n_layers,
+                                  use_cuda=use_cuda, bidirectional=bidirectional)
         self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size, n_layers=n_layers,
@@ -148,14 +148,14 @@ class GRUEncoderDecoder(EncoderDecoder):
         self.tokens = tokens
         self.use_attention = attention
         self.bidirectional = bidirectional
-
+        self.use_cuda = use_cuda
         
 class Trainer(object):
 
     def __init__(self, model, optimizer, lossfn, trainloader=None,
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
                  teacher_forcing_ratio=0.5, epoch=10, save_freq=1000,
-                 dictionary=None, target_dist=None):
+                 dictionary=None, target_dist=None, scheduler=None):
         self.model = model
         self.optim = optimizer
         self.lossfn = lossfn
@@ -171,6 +171,7 @@ class Trainer(object):
         self.n_iter = 0
         self.dictionary = dictionary
         self.target_dist = None
+        self.scheduler = scheduler
         np.random.seed(1)
         torch.manual_seed(1)
         if self.model.use_cuda:
@@ -191,7 +192,12 @@ class Trainer(object):
             print("epoch {}".format(epoch))
             loss_list = []
             start = time.time()
+            if self.scheduler is not None:
+                self.scheduler.step()
             for idx, tensors in enumerate(self.trainloader):
+                if (idx+1) % 200 == 0:
+                    print(idx+1)
+                    print(np.mean(loss_list))
                 x = Variable(tensors[0])
                 target = Variable(tensors[1])
                 if self.model.use_cuda:
@@ -206,7 +212,8 @@ class Trainer(object):
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
 
-                if idx % self.save_freq == 0:
+
+                if (idx+1) % self.save_freq == 0:
                     print("batch idx", idx)
                     end = time.time()
                     print("time : ", end -start )
@@ -214,7 +221,7 @@ class Trainer(object):
                     print("Varidation Start")
                     val_loss, attention = self.validation()
                     self.save_model(os.path.join(self.save_dir,
-                                                 "epoch{}_batchidx{}".format(epoch, idx)))
+                                                 "epoch{}_batchidx{}".format(epoch, idx+1)))
                     print("train loss {}".format(np.mean(loss_list)))
                     print("val loss {}".format(val_loss))
                     if summary_writer is not None:
@@ -230,7 +237,7 @@ class Trainer(object):
     def summary_write(self, writer, train_loss, val_loss, attention=None):
         writer.add_scalar("data/train_loss", train_loss , self.n_iter)
         writer.add_scalar("data/val_loss", val_loss , self.n_iter)
-        if (attention is not None) and self.use_attention:
+        if (attention is not None):
             writer.add_image("data/attention", attention[0,:,-25:], self.n_iter)
         
     def validation(self):
@@ -249,18 +256,20 @@ class Trainer(object):
                 topk, topi = (probs.data - target_dist).topk(3)
             else:
                 topk, topi = probs.data.topk(3)
+            loss, size = self.get_loss(model_out, target[:,1:])
+            losses.append(loss.data[0] / size)
 
-            if self.dictionary is not None:
-                model_seq = topi.cpu().numpy()[:4,:,0]
-                in_seq = x.data.cpu().numpy()[:4]
-                target_seq = target.data.cpu().numpy()[:4]
+            if (self.dictionary is not None) and (idx == 0):
+                model_seq = topi.cpu().numpy()[5:10,:,0]
+                in_seq = x.data.cpu().numpy()[5:10]
+                target_seq = target.data.cpu().numpy()[5:10]
                 batchsize = model_seq.shape[0]
                 
                 for batch in range(batchsize):
                     input_sentence = self.dictionary.indexlist2sentence(in_seq[batch][::-1])
                     target_sentence = self.dictionary.indexlist2sentence(target_seq[batch])
                     model_sentence = self.dictionary.indexlist2sentence(model_seq[batch])
-            
+
                     print("-----------------------------------------")
                     print("> ", input_sentence)
                     print("= ", target_sentence)
@@ -269,8 +278,6 @@ class Trainer(object):
                     print(" ")
                     
                 
-            loss, size = self.get_loss(model_out, target[:,1:])
-            losses.append(loss.data[0] / size)
         return np.mean(losses), attention
 
     
@@ -305,16 +312,8 @@ class Trainer(object):
 
     def get_loss(self, predict, target):
         length = min(predict.size()[1], target.size()[1])
-        # weight = (target != self.model.tokens["PAD"]).data
-        # weight = weight.cpu().numpy() #weight = B * M
         loss = 0
         for di in range(length):
-            # index = np.where(weight[:, di])[0]
-            # if index.shape[0] == 0:
-            #     break
-            # index = torch.from_numpy(index)
-            # if self.model.use_cuda: index = index.cuda()
-            # loss += self.lossfn(predict[index][:,di], target[index][:,di])
             loss += self.lossfn(predict[:,di], target[:,di])
 
         return loss, (di + 1)

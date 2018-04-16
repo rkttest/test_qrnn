@@ -197,6 +197,7 @@ class LSTMEncoder(nn.Module):
         self.p = dropout_p
         self.LSTM = nn.LSTM(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
         self.bidirectional = bidirectional
+
         
     def forward(self, x):
         # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
@@ -245,7 +246,8 @@ class GRUDecoder(nn.Module):
         self.use_attention = attention
         if self.use_attention:
             self.attention = Attention(self.hidden_size)            
-            self.attn_linear = nn.Linear(hidden_size*2, hidden_size)            
+            self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
+            
     def forward(self, x, encoder_c, encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
 

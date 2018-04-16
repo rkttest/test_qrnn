@@ -7,18 +7,20 @@ class HyperParams(object):
 
 HP = HyperParams()
 
-HP.embedding_size = 300
-HP.hidden_size = 128
-HP.n_layers = 1
-HP.dropout_p = 0.1
-HP.n_words = 7000
+
+HP.embedding_size = 400
+HP.hidden_size = 500
+HP.n_layers = 2
+HP.dropout_p = 0.2
+HP.n_words = 55000
 HP.max_word_len = 30
 HP.tokens = dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3})
-HP.USE_CUDA = False
-HP.learning_rate = 0.005
-HP.l2 = 0.00001
-HP.batch_size = 40
-HP.epoch = 3000
-HP.save_freq = 200
-HP.save_dir = "SavedModel/25"
+
+HP.USE_CUDA = True
+HP.learning_rate = 0.001
+HP.l2 = 0.000001
+HP.batch_size = 32
+HP.epoch = 30
+HP.save_freq = 4000
+HP.save_dir = "SavedModel/16"
 HP.use_attention = True

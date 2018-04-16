@@ -78,13 +78,14 @@ class Attention(nn.Module):
     def __init__(self, hidden_size=64, attn_type="Bahdanau"):
         super(Attention, self).__init__()
         self.softmax = nn.functional.softmax
-        self.linear_score = nn.Linear(hidden_size, hidden_size)
-
         self.type = attn_type
+        
         if self.type == "Bahdanau":
-            self.enc_linear = nn.Linear(hidden_size, hidden_size)
-            self.dec_linear = nn.Linear(hidden_size, hidden_size)
+            self.enc_linear = nn.Linear(hidden_size, hidden_size//2)
+            self.dec_linear = nn.Linear(hidden_size, hidden_size//2)
             self.vect_linear = nn.Linear(hidden_size, 1)
+        else:
+            self.linear_score = nn.Linear(hidden_size, hidden_size)            
     def forward(self, input_encode, target_encode, mask=None):
         #input_encode = N * B * H
         #target_encode = 1 * B * H
@@ -113,7 +114,8 @@ class Attention(nn.Module):
             matrix = self.vect_linear(matrix)
             matrix = matrix.squeeze(3).transpose(1, 2)
         else:
-            matrix = torch.bmm(target_encode, input_encode)            
+            matrix = torch.bmm(target_encode, input_encode)
+            
         #matrix -= matrix.mean(dim=2).unsqueeze(2)
         #matrix = (matrix ** 2).sqrt()
         if mask is not None:
