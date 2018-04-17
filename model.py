@@ -9,7 +9,14 @@ from torch.nn.init import xavier_uniform, kaiming_uniform, xavier_normal
 import torch.nn.functional as F
 from optim.adam import Adam
 import random
+
+from seq2seq.models.DecoderRNN import DecoderRNN
+from seq2seq.models.EncoderRNN import EncoderRNN
+from seq2seq.models.TopKDecoder import TopKDecoder
+
+
 import numpy as np
+np.random.seed(1)
 import time
 
 def xavier_init(model):
@@ -22,13 +29,13 @@ def xavier_init(model):
 
     print("--------total----------")
     print(count)
-
+    
         
 class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True):
+                 use_cuda=False, attention=True, bidirectional=False):
         super(EncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -38,11 +45,13 @@ class EncoderDecoder(nn.Module):
                                hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
         self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,                               
-                               hidden_size=hidden_size, n_layers=n_layers, attention=attention)
+                               hidden_size=hidden_size,
+                               n_layers=n_layers, attention=attention)
         self.use_cuda = use_cuda
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention
+        self.bidirectional = bidirectional
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
@@ -50,6 +59,9 @@ class EncoderDecoder(nn.Module):
         encoder_out, encoder_c = self.encoder(x)
         decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
         decoder_c = encoder_c
+        if self.bidirectional:
+            size = encoder_c.size()
+            encoder_c = encoder_c.view(2, size[0]//2, size[1], size[2]).sum(dim=1)
         if type(decoder_c) == tuple:
             decoder_c = list(encoder_c)
             decoder_c[1] = Variable(torch.zeros(encoder_c[1].size()))
@@ -93,19 +105,47 @@ class EncoderDecoder(nn.Module):
             return decoder_outseq, attention_out
         return decoder_outseq
 
-    def word_forward(x, decoder_input, target=None, getattention=False):
-        encoder_out, encoder_c = self.encoder(x)
-        decoder_c = encoder_c
-        mask = (x == 0).unsqueeze(1).data
-        if self.use_cuda:
-            decoder_input=decoder_input.cuda()
-            mask = mask.cuda()
-                        
-        decoder_out, _, attention = self.decoder(decoder_input, decoder_c,
-                                                 encoder_out=encoder_out,
-                                                 mask=mask)
-        return decoder_out, attention
 
+class BeamEncoderDecoder(nn.Module):
+    def __init__(self, embedding_size=128, hidden_size=256,
+                 n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
+                 tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
+                 use_cuda=False, attention=True, bidirectional=False,
+                 beam_search=True, topk=3):
+        super(BeamEncoderDecoder, self).__init__()
+        self.topk = topk
+        self.embedding = nn.Embedding(n_words, hidden_size,
+                                      padding_idx=None)
+        self.encoder = EncoderRNN(n_words, max_word_len, hidden_size, n_layers=n_layers,
+                                  dropout_p=dropout_p, input_dropout_p=dropout_p)
+        self.decoder = DecoderRNN(n_words, max_word_len-1, hidden_size, n_layers=n_layers,
+                                  sos_id=tokens["SOS"], eos_id=tokens["EOS"],
+                                  dropout_p=dropout_p, input_dropout_p=dropout_p,
+                                  use_attention=True)
+        self.topk_decoder = TopKDecoder(self.decoder, self.topk, )
+        self.encoder.embedding = self.embedding        
+        self.decoder.embedding = self.embedding
+        self.use_cuda = use_cuda
+        
+    def forward(self, x, target=None, getattention=False):
+        encoder_out, encoder_c = self.encoder(x)
+        if target is None:
+            decoder_outputs, decoder_c, attn = self.topk_decoder(encoder_outputs=encoder_out,
+                                                           encoder_hidden=encoder_c)
+        else:
+            decoder_outputs, decoder_c, attn = self.decoder(inputs=target,
+                                                         encoder_outputs=encoder_out,
+                                                         encoder_hidden=encoder_c)
+            
+        if getattention:
+            if self.use_attention:
+                attention_out = torch.stack(attn[DecoderRNN.KEY_ATTN_SCORE][0])[:,0,0]
+            else:
+                attention_out = None
+            return decoder_outputs, attention_out
+        return torch.stack(decoder_outputs, dim=1)
+   
+        
 class LSTMEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
@@ -131,7 +171,7 @@ class GRUEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True, bidirectional=False):
+                 use_cuda=False, attention=True, bidirectional=False, residual=False):
         super(GRUEncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -139,11 +179,15 @@ class GRUEncoderDecoder(EncoderDecoder):
         self.encoder = GRUEncoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size, n_layers=n_layers,
-                                  use_cuda=use_cuda, bidirectional=bidirectional)
+                                  use_cuda=use_cuda, bidirectional=bidirectional,
+                                  residual=residual)
         self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                                   hidden_size=hidden_size, n_layers=n_layers,
-                                   use_cuda=use_cuda, attention=attention)
+                                   hidden_size=hidden_size,
+                                  n_layers=n_layers,
+                                   use_cuda=use_cuda,
+                                  attention=attention, bidirectional=bidirectional,
+                                  residual=residual)
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention
@@ -155,7 +199,8 @@ class Trainer(object):
     def __init__(self, model, optimizer, lossfn, trainloader=None,
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
                  teacher_forcing_ratio=0.5, epoch=10, save_freq=1000,
-                 dictionary=None, target_dist=None, scheduler=None):
+                 dictionary=None, target_dist=None, scheduler=None,
+                 beam_search=False, use_mixer=False):
         self.model = model
         self.optim = optimizer
         self.lossfn = lossfn
@@ -172,6 +217,9 @@ class Trainer(object):
         self.dictionary = dictionary
         self.target_dist = None
         self.scheduler = scheduler
+        self.beam_search = beam_search
+        self.use_mixer = use_mixer
+        self.rl_alpha = 10
         np.random.seed(1)
         torch.manual_seed(1)
         if self.model.use_cuda:
@@ -203,15 +251,14 @@ class Trainer(object):
                 if self.model.use_cuda:
                     x = x.cuda()
                     target = target.cuda()
-                    
-                if np.random.rand() < self.teacher_forcing_ratio:
-                    model_out = self.model.forward(x, target=target[:,1:])
+
+                if np.random.random() < self.teacher_forcing_ratio:
+                    model_out = self.model.forward(x, target) 
                 else:
-                    model_out = self.model.forward(x)
+                    model_out = self.model.forward(x)    
                 loss, size = self.get_loss(model_out, target[:,1:])
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
-
 
                 if (idx+1) % self.save_freq == 0:
                     print("batch idx", idx)
@@ -260,9 +307,9 @@ class Trainer(object):
             losses.append(loss.data[0] / size)
 
             if (self.dictionary is not None) and (idx == 0):
-                model_seq = topi.cpu().numpy()[5:10,:,0]
-                in_seq = x.data.cpu().numpy()[5:10]
-                target_seq = target.data.cpu().numpy()[5:10]
+                model_seq = topi.cpu().numpy()[:10,:,0]
+                in_seq = x.data.cpu().numpy()[:10]
+                target_seq = target.data.cpu().numpy()[:10]
                 batchsize = model_seq.shape[0]
                 
                 for batch in range(batchsize):
@@ -316,7 +363,46 @@ class Trainer(object):
         for di in range(length):
             loss += self.lossfn(predict[:,di], target[:,di])
 
+        if self.use_mixer:
+            probs = nn.functional.softmax(predict, dim=1)            
+            reward = self.bleu(probs, target)
+            reward = torch.from_numpy(reward).unsqueeze(1)
+            if use_cuda: reward = reward.cuda()
+            obj = (probs*reward).view(-1, probs.size[-1])
+            target = target.contiguous()
+            obj = obj[target.view(-1)]
+            loss += self.rl_alpha * obj
         return loss, (di + 1)
     
     def save_model(self, save_path):
         torch.save(self.model.state_dict(), save_path)
+
+    @staticmethod
+    def bleu(model_pred, target, N=4):
+        """
+        BLEUの計算を行う
+        model_pred:B*M
+        target:B*N
+        return B*N
+        """
+        denom = 0
+        numer = 0
+        batch_size = target.size()[0]
+        max_target_len = target.size()[1]
+        r = np.zeros(batch_size)
+        c = np.zeros(batch_size)
+        p_n = np.zeros(batch_size, N)
+        for batch in range(batch_size):
+            for n in range(1, N+1):
+                model_len = (model[batch] > len(self.tokens.keys())).sum()
+                pred_n_gram = [model[batch][i:i+n] for i in range(model_len-n+1)]
+                target_len = (target[batch] > len(self.tokens.keys())).sum()
+                target_n_gram = [target[batch][i:i+n] for i in range(target_len-n+1)]
+                denom = len(target_n_gram)
+                numer = len([_ for i in range(target_len) if ((pred_n_gram[i]==target_n_gram[i]).data.sum()==n)])
+                r[batch] += target_len
+                c[batch] += model_len
+                p_n[batch, n-1] = denom / numer
+        BP = np.minimum(1, np.exp(1 - c / r))
+        BLEU = BP * np.sum(np.log(p_n+1e-10), axis=1)
+        return BLEU

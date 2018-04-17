@@ -13,18 +13,19 @@ from optim.adam import Adam
 from torch.utils.data import TensorDataset
 from torch.utils.data.sampler import WeightedRandomSampler
 from optim.lr_scheduler import MultiStepLR
-from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder
+from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder, BeamEncoderDecoder
 from tensorboardX import SummaryWriter
 
 from hyperparam import HP
 sys.path.append("../../src")
+
 from wordsdictionary import simpleWordDict, ssWordDict
 
 
-
 def main():
-    #wd = simpleWordDict("../../Dictionary/datum/reshape_merged_dict.csv")    
-    wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
+    wd = ssWordDict("../../Dictionary/newdata/WordDict.csv",
+                    "../../Dictionary/newdata/TypeDict.csv")
+    
     s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
@@ -33,17 +34,22 @@ def main():
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
                                use_cuda=HP.USE_CUDA,
-                               attention=HP.use_attention)
+                                  attention=HP.use_attention, bidirectional=False,
+                                  residual=True)
+
+    # #wd = simpleWordDict("../../Dictionary/datum/reshape_merged_dict.csv")    
+    # wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
+    # s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
     
     #weight = torch.FloatTensor(np.load("../../TrainData/dict_weight.npy"))
-    sampling_weight = np.load("../../Dictionary/sampling_weight.npy")
+
     #if HP.USE_CUDA: weight = weight.cuda()
     #lossfn = nn.CrossEntropyLoss(weight=weight, ignore_index=HP.tokens["PAD"])
     lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])
 
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-    scheduler = MultiStepLR(optimizer, milestones=[10, 20], gamma=0.5)
+    scheduler = MultiStepLR(optimizer, milestones=[5, 10, 15, 20], gamma=0.5)
     
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
     # train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])[:,:,:HP.max_word_len+1]
@@ -67,14 +73,15 @@ def main():
     print("Model", s2s_model)
 
     #weight = torch.FloatTensor(np.load("../json/weight.npy"))
-    with open("../../Dictionary/filteredlist.pkl", "rb") as f:
+    with open("../../Dictionary/newdata/filteredlist.pkl", "rb") as f:
         import pickle
         textdata = pickle.load(f)
     train_data = textdata[:(len(textdata)//10)*8]
+    sampling_weight = np.load("../../Dictionary/newdata/sampling_weight.npy")    
     sampling_weight = sampling_weight[:(len(textdata)//10)*8]
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*8:]
-    val_data = val_data[:1000]
+    val_data = val_data[:2000]
 
     #np.random.shuffle(train_data)
 
@@ -93,9 +100,9 @@ def main():
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
 
     writer = SummaryWriter()
-    trainer.model_initialize("SavedModel/16/epoch18_batchidx4000")
+    trainer.model_initialize()#"SavedModel/16/epoch18_batchidx4000")
     trainer.train(writer)
-
+    
 
 def collate_fn(sample):
     src = [s[0] for s in sample]

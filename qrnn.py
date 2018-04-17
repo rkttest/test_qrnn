@@ -75,11 +75,17 @@ class QRNN(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden_size=64):
+    def __init__(self, hidden_size=64, attn_type="Bahdanau", bidirectional=False):
         super(Attention, self).__init__()
         self.softmax = nn.functional.softmax
-        self.linear_score = nn.Linear(hidden_size, hidden_size)
-        
+        self.type = attn_type
+        bidirectional_scale = 2 if bidirectional else 1        
+        if self.type == "Bahdanau":
+            self.enc_linear = nn.Linear(hidden_size*bidirectional_scale, hidden_size//2)
+            self.dec_linear = nn.Linear(hidden_size, hidden_size//2)
+            self.vect_linear = nn.Linear(hidden_size//2, 1)
+        else:
+            self.linear_score = nn.Linear(hidden_size*bidirectional_scale, hidden_size)            
     def forward(self, input_encode, target_encode, mask=None):
         #input_encode = N * B * H
         #target_encode = 1 * B * H
@@ -87,17 +93,29 @@ class Attention(nn.Module):
         #attn = B * 1 * N
         #mask = B * 1 * N
 
-        #input_encode : N * B * H -> B * H * N
-
-
-        #target_encode : 1 * B * H -> B * 1 * H
+        if self.type == "Bahdanau":
+            #input_encode : N * B * H -> B * N * 1 * H 
+            #target_encode : 1 * B * H -> B * N * 1 * H
+            input_encode = self.enc_linear(input_encode.transpose(0, 1)).unsqueeze(2)
+            target_encode = self.dec_linear(target_encode.transpose(0, 1))
+            target_encode = torch.stack([target_encode] *input_encode.size()[1], dim=1)
+        else:
+            #input_encode : N * B * H -> B * H * N
+            #target_encode : 1 * B * H -> B * 1 * H
+            input_encode = input_encode.transpose(0, 1).transpose(1, 2)
+            target_encode = self.linear_score(target_encode)
+            target_encode = target_encode.transpose(0, 1)
         
         #tmp = torch.cat([input_encode, target_encode], dim=2)
         #matrix : B * 1 * N
-        input_encode = input_encode.transpose(0, 1).transpose(1, 2)            
-        target_encode = self.linear_score(target_encode)
-        target_encode = target_encode.transpose(0, 1)
-        matrix = torch.bmm(target_encode, input_encode)
+
+        if self.type == "Bahdanau":
+            matrix = torch.add(target_encode, input_encode)
+            matrix = self.vect_linear(matrix)
+            matrix = matrix.squeeze(3).transpose(1, 2)
+        else:
+            matrix = torch.bmm(target_encode, input_encode)
+            
         #matrix -= matrix.mean(dim=2).unsqueeze(2)
         #matrix = (matrix ** 2).sqrt()
         if mask is not None:
