@@ -43,7 +43,7 @@ def main():
 
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-    scheduler = MultiStepLR(optimizer, milestones=[5, 10, 15], gamma=0.5)
+    scheduler = MultiStepLR(optimizer, milestones=[10, 20], gamma=0.5)
     
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
     # train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])[:,:,:HP.max_word_len+1]
@@ -93,7 +93,7 @@ def main():
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
 
     writer = SummaryWriter()
-    trainer.model_initialize("SavedModel/15/epoch2_batchidx8000")
+    trainer.model_initialize("SavedModel/16/epoch18_batchidx4000")
     trainer.train(writer)
 
 

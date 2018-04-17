@@ -17,10 +17,10 @@ HP.max_word_len = 30
 HP.tokens = dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3})
 
 HP.USE_CUDA = True
-HP.learning_rate = 0.001
+HP.learning_rate = 0.00025
 HP.l2 = 0.000001
-HP.batch_size = 32
+HP.batch_size = 28
 HP.epoch = 30
 HP.save_freq = 4000
-HP.save_dir = "SavedModel/16"
+HP.save_dir = "SavedModel/17"
 HP.use_attention = True
