@@ -50,10 +50,10 @@ def main():
 
     optimizer = torch.optim.SGD(s2s_model.parameters(), lr=HP.learning_rate, momentum=0.9,
                     weight_decay=HP.l2, nesterov=True)
-    scheduler = CycleLR(optimizer, max_lr=0.005, cycle_step=1000)    
+    scheduler = CycleLR(optimizer, max_lr=0.005, cycle_step=1000) 
     # optimizer = Adam(s2s_model.parameters(),
     #                  lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-    # scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.5)
+    # scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.4)
 
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
     # train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])[:,:,:HP.max_word_len+1]
