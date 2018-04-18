@@ -13,20 +13,21 @@ from optim.adam import Adam
 from torch.utils.data import TensorDataset
 from torch.utils.data.sampler import WeightedRandomSampler
 from optim.lr_scheduler import MultiStepLR
+from model import CycleLR
 from model import EncoderDecoder, Trainer, LSTMEncoderDecoder, GRUEncoderDecoder, BeamEncoderDecoder
 from tensorboardX import SummaryWriter
 
 from hyperparam import HP
-sys.path.append("../data")
-
-from wordsdictionary import simpleWordDict, ssWordDict
-
+sys.path.append("../json")
+#from wordsdictionary import simpleWordDict, ssWordDict
+from dictionary import WordDict
 
 def main():
     #wd = ssWordDict("../../Dictionary/newdata/WordDict.csv",
     #                "../../Dictionary/newdata/TypeDict.csv")
-    wd = simpleWordDict("../json/w2i.csv")    
-    s2s_model = BeamEncoderDecoder(embedding_size=HP.embedding_size,
+    wd = WordDict()
+    wd.load_dict(pd.read_csv("../json/w2i.csv"))
+    s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
@@ -34,8 +35,8 @@ def main():
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
                                use_cuda=HP.USE_CUDA,
-                                   attention=HP.use_attention, bidirectional=False,
-                                   topk=1)
+                                attention=HP.use_attention, bidirectional=False,
+                                   residual=True)
 
 
     # wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
@@ -47,10 +48,13 @@ def main():
     #lossfn = nn.CrossEntropyLoss(weight=weight, ignore_index=HP.tokens["PAD"])
     lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])
 
-    optimizer = Adam(s2s_model.parameters(),
-                     lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-    scheduler = MultiStepLR(optimizer, milestones=[5, 10, 15, 20], gamma=0.5)
-    
+    optimizer = torch.optim.SGD(s2s_model.parameters(), lr=HP.learning_rate, momentum=0.9,
+                    weight_decay=HP.l2, nesterov=True)
+    scheduler = CycleLR(optimizer, max_lr=0.005, cycle_step=1000)    
+    # optimizer = Adam(s2s_model.parameters(),
+    #                  lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
+    # scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.5)
+
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
     # train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])[:,:,:HP.max_word_len+1]
     # train_arr[:,0,:] = train_arr[:,0,::-1]
@@ -79,7 +83,7 @@ def main():
         textdata = pickle.load(f)
     train_data = textdata[:(len(textdata)//10)*8]
     #sampling_weight = np.load("../../Dictionary/newdata/sampling_weight.npy")
-    sampling_weight = np.ones(train_data.shape[0])
+    sampling_weight = np.ones(len(train_data))
     sampling_weight = sampling_weight[:(len(textdata)//10)*8]
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*8:]
@@ -102,9 +106,9 @@ def main():
 
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
 
-    #writer = SummaryWriter()
+    writer = SummaryWriter()
     trainer.model_initialize()#"SavedModel/16/epoch18_batchidx4000")
-    trainer.train()#writer)
+    trainer.train(writer)
     
 
 def collate_fn(sample):

@@ -248,6 +248,9 @@ class Trainer(object):
             if self.scheduler is not None:
                 self.scheduler.step()
             for idx, tensors in enumerate(self.trainloader):
+                if type(self.scheduler) == CycleLR:
+                    self.scheduler.step()
+                    
                 if (idx+1) % 200 == 0:
                     print(idx+1)
                     print(np.mean(loss_list))
@@ -430,3 +433,25 @@ class Trainer(object):
         BP = np.minimum(1, np.exp(1 - c / r))
         BLEU = BP * np.sum(np.log(p_n+1e-10), axis=1)
         return BLEU
+
+
+from torch.optim.lr_scheduler import _LRScheduler
+class CycleLR(_LRScheduler):
+    def __init__(self, optimizer, last_epoch=-1, min_lr=1e-5,
+                 max_lr=1e-3, cycle_step=4000):
+        self.optimizer = optimizer
+        self.max_lr = max_lr
+        self.cycle_step = cycle_step
+        super(CycleLR, self).__init__(optimizer, last_epoch=-1)                
+        #base_lr = min_lr
+        
+    def get_lr(self):
+        return [self.calc_lr(base_lr) for base_lr in self.base_lrs]
+
+
+    def calc_lr(self, base_lr):
+        step = self.last_epoch % self.cycle_step
+        c = base_lr + 2 * (self.max_lr - base_lr) * ((step + 1) / self.cycle_step)
+        lr = c - 2 * max(0, c - self.max_lr)
+        return lr
+
