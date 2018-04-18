@@ -18,7 +18,7 @@ HP.tokens = dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3})
 
 HP.USE_CUDA = True
 HP.learning_rate = 0.001
-HP.l2 = 0.000001
+HP.l2 = 1e-5
 HP.batch_size = 32
 HP.epoch = 30
 HP.save_freq = 3000
