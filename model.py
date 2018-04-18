@@ -121,11 +121,12 @@ class BeamEncoderDecoder(nn.Module):
         self.decoder = DecoderRNN(n_words, max_word_len-1, hidden_size, n_layers=n_layers,
                                   sos_id=tokens["SOS"], eos_id=tokens["EOS"],
                                   dropout_p=dropout_p, input_dropout_p=dropout_p,
-                                  use_attention=True)
-        self.topk_decoder = TopKDecoder(self.decoder, self.topk, )
+                                  use_attention=attention)
+        self.topk_decoder = TopKDecoder(self.decoder, self.topk)
         self.encoder.embedding = self.embedding        
         self.decoder.embedding = self.embedding
         self.use_cuda = use_cuda
+        self.use_attention = attention
         
     def forward(self, x, target=None, getattention=False):
         encoder_out, encoder_c = self.encoder(x)
@@ -139,10 +140,11 @@ class BeamEncoderDecoder(nn.Module):
             
         if getattention:
             if self.use_attention:
+                print(attn.keys())
                 attention_out = torch.stack(attn[DecoderRNN.KEY_ATTN_SCORE][0])[:,0,0]
             else:
                 attention_out = None
-            return decoder_outputs, attention_out
+            return torch.stack(decoder_outputs,dim=1), attention_out
         return torch.stack(decoder_outputs, dim=1)
    
         
@@ -195,12 +197,13 @@ class GRUEncoderDecoder(EncoderDecoder):
         self.use_cuda = use_cuda
         
 class Trainer(object):
-
+    
     def __init__(self, model, optimizer, lossfn, trainloader=None,
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
                  teacher_forcing_ratio=0.5, epoch=10, save_freq=1000,
-                 dictionary=None, target_dist=None, scheduler=None,
-                 beam_search=False, use_mixer=False):
+                 dictionary=None, target_dist=None, scheduler=None, 
+                 getattention=False, beam_search=False, use_mixer=False):
+
         self.model = model
         self.optim = optimizer
         self.lossfn = lossfn
@@ -218,6 +221,7 @@ class Trainer(object):
         self.target_dist = None
         self.scheduler = scheduler
         self.beam_search = beam_search
+        self.getattention = getattention
         self.use_mixer = use_mixer
         self.rl_alpha = 10
         np.random.seed(1)
@@ -239,10 +243,14 @@ class Trainer(object):
         for epoch in range(self.epoch):
             print("epoch {}".format(epoch))
             loss_list = []
+            perplexity_list = []
             start = time.time()
             if self.scheduler is not None:
                 self.scheduler.step()
             for idx, tensors in enumerate(self.trainloader):
+                if type(self.scheduler) == CycleLR:
+                    self.scheduler.step()
+                    
                 if (idx+1) % 200 == 0:
                     print(idx+1)
                     print(np.mean(loss_list))
@@ -259,8 +267,9 @@ class Trainer(object):
                 loss, size = self.get_loss(model_out, target[:,1:])
                 loss_list.append(loss.data[0] / size)                
                 self.optimize(loss)
-
-                if (idx+1) % self.save_freq == 0:
+                perplexity = self.get_perplexity(model_out, target[:,1:])
+                perplexity_list.append(perplexity)                
+                if idx % self.save_freq == 0:
                     print("batch idx", idx)
                     end = time.time()
                     print("time : ", end -start )
@@ -268,14 +277,17 @@ class Trainer(object):
                     print("Varidation Start")
                     val_loss, attention = self.validation()
                     self.save_model(os.path.join(self.save_dir,
-                                                 "epoch{}_batchidx{}".format(epoch, idx+1)))
+                                                 "epoch{}_batchidx{}".format(epoch, idx)))
                     print("train loss {}".format(np.mean(loss_list)))
                     print("val loss {}".format(val_loss))
+                    print("train perplexity {}".format(np.mean(perplexity_list)))
+                    
                     if summary_writer is not None:
                         self.summary_write(summary_writer, np.mean(loss_list), val_loss,
                                            attention)
 
                     loss_list = []
+                    perplexity_list = []
                 self.n_iter += 1
             if summary_writer is not None:
                 summary_writer.export_scalars_to_json(os.path.join(self.save_dir, "all_scalars_{}.json".format(epoch)))
@@ -295,8 +307,12 @@ class Trainer(object):
             if self.model.use_cuda:
                 x = x.cuda()
                 target = target.cuda()
-            
-            model_out, attention = self.model.forward(x, getattention=True)
+
+            if self.getattention:
+                model_out, attention = self.model.forward(x, getattention=self.getattention)
+            else:
+                model_out = self.model.forward(x, getattention=self.getattention)
+                attention = None
             probs = nn.functional.softmax(model_out, dim=2)
             if self.target_dist is not None:
                 target_dist = self.target_dist.type(type(probs.data))
@@ -324,7 +340,7 @@ class Trainer(object):
                     print("-----------------------------------------")
                     print(" ")
                     
-                
+
         return np.mean(losses), attention
 
     
@@ -363,16 +379,27 @@ class Trainer(object):
         for di in range(length):
             loss += self.lossfn(predict[:,di], target[:,di])
 
+
         if self.use_mixer:
             probs = nn.functional.softmax(predict, dim=1)            
             reward = self.bleu(probs, target)
             reward = torch.from_numpy(reward).unsqueeze(1)
-            if use_cuda: reward = reward.cuda()
+            if self.use_cuda: reward = reward.cuda()
             obj = (probs*reward).view(-1, probs.size[-1])
             target = target.contiguous()
             obj = obj[target.view(-1)]
             loss += self.rl_alpha * obj
+
         return loss, (di + 1)
+
+    def get_perplexity(self, predict, target):
+        
+        probs = nn.functional.softmax(predict, dim=1).detach()
+        probs = probs.view(-1, probs.size()[-1]).contiguous()
+        target = target.contiguous()
+        target = target.view(-1)
+        perplexity = (1. / (probs[:,target] + 1e-10)).mean()
+        return perplexity.data[0]
     
     def save_model(self, save_path):
         torch.save(self.model.state_dict(), save_path)
@@ -406,3 +433,25 @@ class Trainer(object):
         BP = np.minimum(1, np.exp(1 - c / r))
         BLEU = BP * np.sum(np.log(p_n+1e-10), axis=1)
         return BLEU
+
+
+from torch.optim.lr_scheduler import _LRScheduler
+class CycleLR(_LRScheduler):
+    def __init__(self, optimizer, last_epoch=-1, min_lr=1e-5,
+                 max_lr=1e-3, cycle_step=4000):
+        self.optimizer = optimizer
+        self.max_lr = max_lr
+        self.cycle_step = cycle_step
+        super(CycleLR, self).__init__(optimizer, last_epoch=-1)                
+        #base_lr = min_lr
+        
+    def get_lr(self):
+        return [self.calc_lr(base_lr) for base_lr in self.base_lrs]
+
+
+    def calc_lr(self, base_lr):
+        step = self.last_epoch % self.cycle_step
+        c = base_lr + 2 * (self.max_lr - base_lr) * ((step + 1) / self.cycle_step)
+        lr = c - 2 * max(0, c - self.max_lr)
+        return lr
+

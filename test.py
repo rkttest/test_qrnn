@@ -63,7 +63,11 @@ def main():
                       epoch=HP.epoch,
                       save_dir="SavedModel/11", save_freq=HP.save_freq)
 
+<<<<<<< HEAD
+    model_path = "SavedModel/15/epoch9_batchidx2000"
+=======
     model_path = "SavedModel/16/epoch18_batchidx4000"
+>>>>>>> 2791616744e98b1fad37439e89b4a3c92c31838b
 
     trainer.model_initialize(model_path)
     test_out = trainer.test()#target_dist)
