@@ -173,7 +173,7 @@ class GRUEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True, bidirectional=False):
+                 use_cuda=False, attention=True, bidirectional=False, residual=False):
         super(GRUEncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -181,13 +181,15 @@ class GRUEncoderDecoder(EncoderDecoder):
         self.encoder = GRUEncoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size, n_layers=n_layers,
-                                  use_cuda=use_cuda, bidirectional=bidirectional)
+                                  use_cuda=use_cuda, bidirectional=bidirectional,
+                                  residual=residual)
         self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size,
                                   n_layers=n_layers,
                                    use_cuda=use_cuda,
-                                  attention=attention, bidirectional=bidirectional)
+                                  attention=attention, bidirectional=bidirectional,
+                                  residual=residual)
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention
@@ -195,12 +197,13 @@ class GRUEncoderDecoder(EncoderDecoder):
         self.use_cuda = use_cuda
         
 class Trainer(object):
-
+    
     def __init__(self, model, optimizer, lossfn, trainloader=None,
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
                  teacher_forcing_ratio=0.5, epoch=10, save_freq=1000,
-                 dictionary=None, target_dist=None, scheduler=None, beam_search=False,
-                 getattention=False):
+                 dictionary=None, target_dist=None, scheduler=None, 
+                 getattention=False, beam_search=False, use_mixer=False):
+
         self.model = model
         self.optim = optimizer
         self.lossfn = lossfn
@@ -219,6 +222,8 @@ class Trainer(object):
         self.scheduler = scheduler
         self.beam_search = beam_search
         self.getattention = getattention
+        self.use_mixer = use_mixer
+        self.rl_alpha = 10
         np.random.seed(1)
         torch.manual_seed(1)
         if self.model.use_cuda:
@@ -315,9 +320,9 @@ class Trainer(object):
             losses.append(loss.data[0] / size)
 
             if (self.dictionary is not None) and (idx == 0):
-                model_seq = topi.cpu().numpy()[5:10,:,0]
-                in_seq = x.data.cpu().numpy()[5:10]
-                target_seq = target.data.cpu().numpy()[5:10]
+                model_seq = topi.cpu().numpy()[:10,:,0]
+                in_seq = x.data.cpu().numpy()[:10]
+                target_seq = target.data.cpu().numpy()[:10]
                 batchsize = model_seq.shape[0]
                 
                 for batch in range(batchsize):
@@ -370,6 +375,18 @@ class Trainer(object):
         loss = 0
         for di in range(length):
             loss += self.lossfn(predict[:,di], target[:,di])
+
+
+        if self.use_mixer:
+            probs = nn.functional.softmax(predict, dim=1)            
+            reward = self.bleu(probs, target)
+            reward = torch.from_numpy(reward).unsqueeze(1)
+            if self.use_cuda: reward = reward.cuda()
+            obj = (probs*reward).view(-1, probs.size[-1])
+            target = target.contiguous()
+            obj = obj[target.view(-1)]
+            loss += self.rl_alpha * obj
+
         return loss, (di + 1)
 
     def get_perplexity(self, predict, target):
@@ -383,3 +400,33 @@ class Trainer(object):
     
     def save_model(self, save_path):
         torch.save(self.model.state_dict(), save_path)
+
+    @staticmethod
+    def bleu(model_pred, target, N=4):
+        """
+        BLEUの計算を行う
+        model_pred:B*M
+        target:B*N
+        return B*N
+        """
+        denom = 0
+        numer = 0
+        batch_size = target.size()[0]
+        max_target_len = target.size()[1]
+        r = np.zeros(batch_size)
+        c = np.zeros(batch_size)
+        p_n = np.zeros(batch_size, N)
+        for batch in range(batch_size):
+            for n in range(1, N+1):
+                model_len = (model[batch] > len(self.tokens.keys())).sum()
+                pred_n_gram = [model[batch][i:i+n] for i in range(model_len-n+1)]
+                target_len = (target[batch] > len(self.tokens.keys())).sum()
+                target_n_gram = [target[batch][i:i+n] for i in range(target_len-n+1)]
+                denom = len(target_n_gram)
+                numer = len([_ for i in range(target_len) if ((pred_n_gram[i]==target_n_gram[i]).data.sum()==n)])
+                r[batch] += target_len
+                c[batch] += model_len
+                p_n[batch, n-1] = denom / numer
+        BP = np.minimum(1, np.exp(1 - c / r))
+        BLEU = BP * np.sum(np.log(p_n+1e-10), axis=1)
+        return BLEU

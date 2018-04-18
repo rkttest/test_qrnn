@@ -229,20 +229,26 @@ class LSTMEncoder(nn.Module):
 class GRUDecoder(nn.Module):
 
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False,
-                 attention=True, bidirectional=False):
-        
+                 n_layers=2, dropout_p=0.2,  use_cuda=False,
+                 attention=True, bidirectional=False, residual=True):
+
         super(GRUDecoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
         self.softmax = nn.functional.softmax
         self.embed = embedding
         self.hidden_size = hidden_size
         self.n_layers = n_layers
-        
+        self.residual = residual
         self.p = dropout_p
-        self.GRU = nn.GRU(input_size=embedding_size,
-                            hidden_size=self.hidden_size, num_layers=self.n_layers,
-                            dropout=self.p)
+        if self.residual:
+            self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
+                                hidden_size=self.hidden_size, num_layers=1,
+                                dropout=self.p) for i in range(self.n_layers)])
+        else:
+            self.GRU = nn.GRU(input_size=embedding_size,
+                              hidden_size=self.hidden_size, num_layers=self.n_layers,
+                              dropout=self.p)
+            
         self.use_cuda = use_cuda
         self.use_attention = attention
         if self.use_attention:
@@ -267,7 +273,13 @@ class GRUDecoder(nn.Module):
 
         # x : 1 * B * E
         # h_0, c_0 : nlayer * B * H
-        x, h_t = self.GRU(x, h_0)
+        if self.residual:
+            for l in range(self.n_layers):
+                prev = x
+                x, h_t = self.GRUs[l](x, h_0)
+                x = x + prev
+        else:
+            x, h_t = self.GRU(x, h_0)
             
         #このあと attention を加える
         if (encoder_out is not None) and self.use_attention:
@@ -297,7 +309,8 @@ class GRUDecoder(nn.Module):
     
 class GRUEncoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, bidirectional=False):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False,
+                 bidirectional=False, residual=False):
         super(GRUEncoder, self).__init__()
         self.embed = embedding
         self.hidden_size = hidden_size
@@ -305,9 +318,16 @@ class GRUEncoder(nn.Module):
         self.hidden_dims = [hidden_size] * n_layers 
         torch.manual_seed(1)
         self.use_cuda = use_cuda
+        self.residual = residual
         if self.use_cuda:torch.cuda.manual_seed_all(1)
         self.p = dropout_p
-        self.GRU = nn.GRU(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
+        if self.residual:
+            self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
+                                hidden_size=self.hidden_size, num_layers=1,
+                                dropout=self.p,
+                                bidirectional=bidirectional) for i in range(self.n_layers)])
+        else:
+            self.GRU = nn.GRU(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
         self.bidirectional = bidirectional
         
     def forward(self, x):
@@ -321,7 +341,16 @@ class GRUEncoder(nn.Module):
 
         # add dropout
         x = dropout(x, p=self.p)
-        x, h_t = self.GRU(x, h_0)        
+        if self.residual:
+            for l in range(self.n_layers):
+                prev = x
+                if self.bidirectional:
+                    x, h_t = self.GRUs[l](x, h_0)
+                else:
+                    x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
+                x = x + prev
+        else:
+            x, h_t = self.GRU(x, h_0)        
 
         return x, h_t
     
