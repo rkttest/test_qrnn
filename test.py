@@ -54,7 +54,7 @@ def main():
                       testloader=testloader, epoch=HP.epoch,
                       save_dir="SavedModel/11", save_freq=HP.save_freq)
 
-    model_path = "SavedModel/14/epoch9_batchidx2000"
+    model_path = "SavedModel/15/epoch9_batchidx2000"
 
     trainer.model_initialize(model_path)
     test_out = trainer.test()#target_dist)

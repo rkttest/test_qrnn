@@ -28,7 +28,7 @@ def main():
     wd = WordDict()
     wd.load_dict(pd.read_csv("../json/w2i.csv"))
     
-    s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
+    s2s_model = BeamEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
@@ -36,7 +36,8 @@ def main():
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
                                use_cuda=HP.USE_CUDA,
-                                  attention=HP.use_attention, bidirectional=True)
+                                   attention=HP.use_attention, bidirectional=False,
+                                   topk=1)
 
     # #wd = simpleWordDict("../../Dictionary/datum/reshape_merged_dict.csv")    
     # wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
@@ -98,7 +99,7 @@ def main():
                       trainloader=trainloader, epoch=HP.epoch,
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq,
                       dictionary=wd, teacher_forcing_ratio=0.5, scheduler=scheduler,
-                      beam_search=True)
+                      beam_search=True, getattention=False)
     
     #shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
     #writer = SummaryWriter()
