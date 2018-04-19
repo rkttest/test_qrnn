@@ -81,9 +81,9 @@ class Attention(nn.Module):
         self.type = attn_type
         bidirectional_scale = 2 if bidirectional else 1        
         if self.type == "Bahdanau":
-            self.enc_linear = nn.Linear(hidden_size*bidirectional_scale, hidden_size//2)
-            self.dec_linear = nn.Linear(hidden_size, hidden_size//2)
-            self.vect_linear = nn.Linear(hidden_size//2, 1)
+            self.enc_linear = nn.Linear(hidden_size*bidirectional_scale, hidden_size)
+            self.dec_linear = nn.Linear(hidden_size, hidden_size)
+            self.vect_linear = nn.Linear(hidden_size, 1)
         else:
             self.linear_score = nn.Linear(hidden_size*bidirectional_scale, hidden_size)            
     def forward(self, input_encode, target_encode, mask=None):

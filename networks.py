@@ -274,10 +274,13 @@ class GRUDecoder(nn.Module):
         # x : 1 * B * E
         # h_0, c_0 : nlayer * B * H
         if self.residual:
+            h_ts = []
             for l in range(self.n_layers):
                 prev = x
-                x, h_t = self.GRUs[l](x, h_0)
+                x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
+                h_ts.append(h_t)
                 x = x + prev
+            h_t = torch.cat(h_ts, dim=0)
         else:
             x, h_t = self.GRU(x, h_0)
             
@@ -342,13 +345,17 @@ class GRUEncoder(nn.Module):
         # add dropout
         x = dropout(x, p=self.p)
         if self.residual:
+            h_ts = []
             for l in range(self.n_layers):
                 prev = x
                 if self.bidirectional:
                     x, h_t = self.GRUs[l](x, h_0)
                 else:
                     x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
+
+                h_ts.append(h_t)
                 x = x + prev
+            h_t = torch.cat(h_ts, dim=0)
         else:
             x, h_t = self.GRU(x, h_0)        
 
@@ -357,7 +364,7 @@ class GRUEncoder(nn.Module):
     def init_hidden(self):
         bidirection = 2 if self.bidirectional else 1
         h_0 = torch.FloatTensor(self.n_layers*bidirection, self.batch_size, self.hidden_size)
-        h_0.uniform_(-0.001, 0.001)
+        h_0.zero_() #uniform_(-0.001, 0.001)
         if self.use_cuda:
             h_0 = h_0.cuda()
         return Variable(h_0)

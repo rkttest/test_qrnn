@@ -55,10 +55,13 @@ class EncoderDecoder(nn.Module):
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
-
         encoder_out, encoder_c = self.encoder(x)
-        decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
         decoder_c = encoder_c
+        if target is None:
+            decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
+        else:
+            decoder_input = target[:,0].unsqueeze(0)
+
         if self.bidirectional:
             size = encoder_c.size()
             encoder_c = encoder_c.view(2, size[0]//2, size[1], size[2]).sum(dim=1)
@@ -80,7 +83,8 @@ class EncoderDecoder(nn.Module):
                           (decoder_input.data == self.tokens["EOS"]).sum()
             if pad_eos_num >= batch_size:
                 break
-            
+
+            print(decoder_input.data[0, 0], di, target is None, decoder_input.size())
             decoder_out, decoder_c, attention = self.decoder(decoder_input, decoder_c,
                                                              encoder_out=encoder_out,
                                                              mask=mask)
@@ -91,10 +95,11 @@ class EncoderDecoder(nn.Module):
                 decoder_input = Variable(topi[:,:,0]).detach()
                 if self.use_cuda:decoder_input = decoder_input.cuda()
             else:
-                decoder_input = target[:,di].unsqueeze(0).detach()
+                decoder_input = target[:,di+1].unsqueeze(0).detach()
 
             decoder_outlist.append(decoder_out[0])
         decoder_outseq = torch.stack(decoder_outlist, dim=1) # B * M
+        
         if self.use_cuda:decoder_outseq = decoder_outseq.cuda()
 
         if getattention:
@@ -124,6 +129,7 @@ class BeamEncoderDecoder(nn.Module):
                                   use_attention=attention)
         self.topk_decoder = TopKDecoder(self.decoder, self.topk)
         self.encoder.embedding = self.embedding        
+
         self.decoder.embedding = self.embedding
         self.use_cuda = use_cuda
         self.use_attention = attention
@@ -250,7 +256,7 @@ class Trainer(object):
             for idx, tensors in enumerate(self.trainloader):
                 if type(self.scheduler) == CycleLR:
                     self.scheduler.step()
-                    
+                
                 if (idx+1) % 200 == 0:
                     print(idx+1)
                     print(np.mean(loss_list))
@@ -269,7 +275,7 @@ class Trainer(object):
                 self.optimize(loss)
                 perplexity = self.get_perplexity(model_out, target[:,1:])
                 perplexity_list.append(perplexity)                
-                if idx % self.save_freq == 0:
+                if (idx+1) % self.save_freq == 0:
                     print("batch idx", idx)
                     end = time.time()
                     print("time : ", end -start )
@@ -277,7 +283,7 @@ class Trainer(object):
                     print("Varidation Start")
                     val_loss, attention = self.validation()
                     self.save_model(os.path.join(self.save_dir,
-                                                 "epoch{}_batchidx{}".format(epoch, idx)))
+                                                 "epoch{}_batchidx{}".format(epoch, idx+1)))
                     print("train loss {}".format(np.mean(loss_list)))
                     print("val loss {}".format(val_loss))
                     print("train perplexity {}".format(np.mean(perplexity_list)))
@@ -453,5 +459,9 @@ class CycleLR(_LRScheduler):
         step = self.last_epoch % self.cycle_step
         c = base_lr + 2 * (self.max_lr - base_lr) * ((step + 1) / self.cycle_step)
         lr = c - 2 * max(0, c - self.max_lr)
+
+        if (step + 1) == self.cycle_step:
+            self.max_lr *= 0.9
+            self.max_lr = max(self.max_lr, base_lr+1e-5)
         return lr
 
