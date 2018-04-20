@@ -84,7 +84,7 @@ class EncoderDecoder(nn.Module):
             if pad_eos_num >= batch_size:
                 break
 
-            print(decoder_input.data[0, 0], di, target is None, decoder_input.size())
+            #print(decoder_input.data[0, 0], di, target is None, decoder_input.size())
             decoder_out, decoder_c, attention = self.decoder(decoder_input, decoder_c,
                                                              encoder_out=encoder_out,
                                                              mask=mask)

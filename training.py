@@ -106,9 +106,9 @@ def main():
 
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
 
-    #writer = SummaryWriter()
+    writer = SummaryWriter()
     trainer.model_initialize()#"SavedModel/24/epoch13_batchidx12000")
-    trainer.train()#writer)
+    trainer.train(writer)
     
 
 def collate_fn(sample):
