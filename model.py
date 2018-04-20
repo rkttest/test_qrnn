@@ -35,7 +35,7 @@ class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True, bidirectional=False):
+                 use_cuda=False, attention=True, bidirectional=False, target_dist=None):
         super(EncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -52,6 +52,7 @@ class EncoderDecoder(nn.Module):
         self.tokens = tokens
         self.use_attention = attention
         self.bidirectional = bidirectional
+        self.target_dist = target_dist
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
@@ -84,10 +85,12 @@ class EncoderDecoder(nn.Module):
             if pad_eos_num >= batch_size:
                 break
 
-            print(decoder_input.data[0, 0], di, target is None, decoder_input.size())
+            #print(decoder_input.data[0, 0], di, target is None, decoder_input.size())
             decoder_out, decoder_c, attention = self.decoder(decoder_input, decoder_c,
                                                              encoder_out=encoder_out,
                                                              mask=mask)
+            if self.target_dist is not None:
+                decoder_out.data -= self.target_dist
             topv, topi = decoder_out.data.topk(1)
             attention_out.append(attention)
             
@@ -158,18 +161,22 @@ class LSTMEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True, bidirectional=False):
+                 use_cuda=False, attention=True, bidirectional=False,
+                 residual=True, blockterm=True):
         super(LSTMEncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
         
         self.encoder = LSTMEncoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                                   hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda, bidirectional=bidirectional)
+                                   hidden_size=hidden_size, n_layers=n_layers,
+                                   use_cuda=use_cuda, bidirectional=bidirectional,
+                                   residual=residual, blockterm=blockterm)
         self.decoder = LSTMDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size, n_layers=n_layers,
-                                   use_cuda=use_cuda, attention=attention)
+                                   use_cuda=use_cuda, attention=attention,
+                                   residual=residual, blockterm=blockterm)
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention
@@ -179,7 +186,7 @@ class GRUEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True, bidirectional=False, residual=False):
+                 use_cuda=False, attention=True, bidirectional=False, residual=False, target_dist=None):
         super(GRUEncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -201,6 +208,7 @@ class GRUEncoderDecoder(EncoderDecoder):
         self.use_attention = attention
         self.bidirectional = bidirectional
         self.use_cuda = use_cuda
+        self.target_dist = target_dist
         
 class Trainer(object):
     

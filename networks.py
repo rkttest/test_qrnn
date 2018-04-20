@@ -5,6 +5,7 @@ from torch import nn
 from torch.autograd import Variable
 from qrnn import QRNN, Attention
 from torch.nn.functional import dropout
+from sample import myLSTM
 
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=32,
@@ -121,7 +122,8 @@ class Encoder(nn.Module):
 class LSTMDecoder(nn.Module):
 
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, attention=True):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, attention=True,
+                 residual=True, blockterm=True):
         
         super(LSTMDecoder, self).__init__()
         self.linear = nn.Linear(hidden_size, dict_size)
@@ -129,34 +131,46 @@ class LSTMDecoder(nn.Module):
         self.embed = embedding
         self.hidden_size = hidden_size
         self.n_layers = n_layers
-        
+        self.residual = residual
         self.p = dropout_p
-        self.LSTM = nn.LSTM(input_size=embedding_size,
-                            hidden_size=self.hidden_size, num_layers=self.n_layers,
-                            dropout=self.p)
+        if residual:
+            self.LSTMs = nn.ModuleList([myLSTM(hidden_size=self.hidden_size,
+                                                  dropout=self.p,
+                                                  blockterm=True, I=[4, 5, 5], J=[4, 10, 10],
+                                                  R=8) for _ in range(self.n_layers)])
+        else:
+            pass
+
+
         self.use_cuda = use_cuda
         self.use_attention = attention
         if self.use_attention:
             self.attention = Attention(self.hidden_size)            
-            self.attn_linear = nn.Linear(hidden_size*2, hidden_size)            
+            self.attn_linear = nn.Linear(hidden_size*2, hidden_size)
+            
     def forward(self, x, encoder_c, encoder_out=None, mask=None):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
 
         # x :1文字の入力ベクトル : 1 * B 
         # x : B -> 1 * B * E
         self.batch_size = x.size()[0]
-        h_0, c_0 = encoder_c
+        
+        encoder_out = encoder_out.transpose(0, 1)
+        h, c = encoder_c
 
         x = self.embed(x)
 
         # add dropout
-        x = dropout(x, p=self.p, training=True)
-
+        #x = dropout(x, p=self.p, training=True)
 
         # x : 1 * B * E
         # h_0, c_0 : nlayer * B * H
-        x, (h_t, c_t) = self.LSTM(x, (h_0, c_0))
-            
+        for l in range(self.n_layers):
+            prev = x
+            x, c = self.LSTMs[l](x, (h, c))
+            h = x[:,-1]
+            if self.residual:
+                x = x + prev
         #このあと attention を加える
         if (encoder_out is not None) and self.use_attention:
             # x : 1 * B * H
@@ -180,22 +194,30 @@ class LSTMDecoder(nn.Module):
 
         # c_out_list : list(B * H), listlen=n_layers
         
-        return probs, (h_t, c_t), attn
+        return probs, (h, c), attn
 
     
 class LSTMEncoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
-                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False, bidirectional=False):
+                 n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False,
+                 bidirectional=False, blockterm=True, residual=True):
         super(LSTMEncoder, self).__init__()
         self.embed = embedding
         self.hidden_size = hidden_size
         self.n_layers = n_layers
-        self.hidden_dims = [hidden_size] * n_layers 
         torch.manual_seed(1)
         self.use_cuda = use_cuda
         if self.use_cuda:torch.cuda.manual_seed_all(1)
         self.p = dropout_p
-        self.LSTM = nn.LSTM(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
+        assert(embedding_size==hidden_size)
+        self.residual = residual
+        if residual:
+            self.LSTMs = nn.ModuleList([myLSTM(hidden_size=self.hidden_size,
+                                                  dropout=self.p,
+                                                  blockterm=True, I=[4, 5, 5], J=[4, 10, 10],
+                                                  R=8) for _ in range(self.n_layers)])
+        else:
+            pass
         self.bidirectional = bidirectional
 
         
@@ -203,16 +225,19 @@ class LSTMEncoder(nn.Module):
         # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
         # init_c : Qrnn の初期値(t = -1 の値) : B * E (n=0), B * H (n > 0) : n_layerl分
         self.batch_size = x.size()[0]
-        h_0, c_0 = self.init_hidden()
+        h, c = self.init_hidden()
+        h = h[0]
+        c = c[0]
 
-        # x : B * N -> N * B * E (E : Embedding dim)
-        x = self.embed(x).transpose(0, 1)
-
-        # add dropout
-        x = dropout(x, p=self.p)
-        x, (h_t, c_t) = self.LSTM(x, (h_0, c_0))        
-
-        return x, (h_t, c_t)
+        # x : B * N -> B * N * E (E : Embedding dim)
+        x = self.embed(x) #.transpose(0, 1)
+        for l in range(self.n_layers):
+            prev = x
+            x, c = self.LSTMs[l](x, (h, c))
+            h = x[:,-1]
+            if self.residual:
+                x = x + prev
+        return x, (h, c)
     
     def init_hidden(self):
         bidirection = 2 if self.bidirectional else 1
@@ -326,9 +351,10 @@ class GRUEncoder(nn.Module):
         self.p = dropout_p
         if self.residual:
             self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
-                                hidden_size=self.hidden_size, num_layers=1,
-                                dropout=self.p,
-                                bidirectional=bidirectional) for i in range(self.n_layers)])
+                                              hidden_size=self.hidden_size, num_layers=1,
+                                              dropout=self.p,
+                                              bidirectional=bidirectional) \
+                                           for i in range(self.n_layers)])
         else:
             self.GRU = nn.GRU(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
         self.bidirectional = bidirectional
