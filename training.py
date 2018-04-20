@@ -19,14 +19,22 @@ from tensorboardX import SummaryWriter
 
 from hyperparam import HP
 sys.path.append("../../src")
-from wordsdictionary import simpleWordDict, ssWordDict
-
+sys.path.append("../json")
+#from wordsdictionary import simpleWordDict, ssWordDict
+from dictionary import WordDict
 
 def main():
-    wd = ssWordDict("../../Dictionary/newdata/WordDict.csv",
-                   "../../Dictionary/newdata/TypeDict.csv")
-    #wd = WordDict()
-    #wd.load_dict(pd.read_csv("../json/w2i.csv"))
+    # wd = ssWordDict("../../Dictionary/newdata/WordDict.csv",
+    #                "../../Dictionary/newdata/TypeDict.csv")
+    wd = WordDict()
+    wd.load_dict(pd.read_csv("../json/w2i.csv"))
+    target_dist = np.load("target_dist.npy")
+    target_dist = np.r_[target_dist, np.zeros(HP.n_words - target_dist.shape[0])]
+    target_dist = np.log(target_dist + 1e-10)
+    
+    target_dist = torch.from_numpy(target_dist)
+    target_dist = target_dist.type(torch.FloatTensor).unsqueeze(0).unsqueeze(0)
+    if HP.USE_CUDA: target_dist = target_dist.cuda()
     s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
                                n_layers=HP.n_layers,
@@ -36,7 +44,7 @@ def main():
                                tokens=HP.tokens,
                                use_cuda=HP.USE_CUDA,
                                 attention=HP.use_attention, bidirectional=False,
-                                   residual=True)
+                                   residual=True, target_dist=target_dist)
 
 
     # wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
@@ -48,12 +56,18 @@ def main():
     #lossfn = nn.CrossEntropyLoss(weight=weight, ignore_index=HP.tokens["PAD"])
     lossfn = nn.CrossEntropyLoss(ignore_index=HP.tokens["PAD"])
 
-    optimizer = torch.optim.SGD(s2s_model.parameters(), lr=HP.learning_rate, momentum=0.9,
-                    weight_decay=HP.l2, nesterov=True)
-    scheduler = CycleLR(optimizer, max_lr=0.01, cycle_step=4000) 
+    # optimizer = torch.optim.SGD(s2s_model.parameters(), lr=HP.learning_rate, momentum=0.9,
+    #                 weight_decay=HP.l2, nesterov=True)
+    # scheduler = CycleLR(optimizer, max_lr=0.01, cycle_step=4000) 
     # optimizer = Adam(s2s_model.parameters(),
-    #                  lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
-    # scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.4)
+    #lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
+    # optimizer = Adam(s2s_model.embedding.parameters(),                     
+    #                   lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
+    
+    optimizer = torch.optim.Adam(s2s_model.parameters(),
+                     lr=HP.learning_rate, weight_decay=HP.l2)
+    scheduler = CycleLR(optimizer, max_lr=0.005, cycle_step=1000) 
+    #scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.4)
 
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
     # train_arr = train_arr.reshape(-1, 2, train_arr.shape[1])[:,:,:HP.max_word_len+1]
@@ -77,13 +91,13 @@ def main():
     print("Model", s2s_model)
 
     #weight = torch.FloatTensor(np.load("../json/weight.npy"))
-    with open("../../Dictionary/newdata/filteredlist.pkl", "rb") as f:
-        #with open("../json/textlist.pkl", "rb") as f:        
+    #with open("../../Dictionary/newdata/filteredlist.pkl", "rb") as f:
+    with open("../json/textlist.pkl", "rb") as f:        
         import pickle
         textdata = pickle.load(f)
     train_data = textdata[:(len(textdata)//10)*8]
-    sampling_weight = np.load("../../Dictionary/newdata/sampling_weight.npy")
-    #sampling_weight = np.ones(len(train_data))
+    #sampling_weight = np.load("../../Dictionary/newdata/sampling_weight.npy")
+    sampling_weight = np.ones(len(train_data))
     sampling_weight = sampling_weight[:(len(textdata)//10)*8]
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*8:]
