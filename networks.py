@@ -5,7 +5,7 @@ from torch import nn
 from torch.autograd import Variable
 from qrnn import QRNN, Attention
 from torch.nn.functional import dropout
-from sample import myLSTM
+#from sample import myLSTM
 
 class Decoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=32,
@@ -255,20 +255,25 @@ class GRUDecoder(nn.Module):
 
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
                  n_layers=2, dropout_p=0.2,  use_cuda=False,
-                 attention=True, bidirectional=False, residual=True):
+                 attention=True, residual=True, bidirectional=False
+                 outdict_size=10000):
 
         super(GRUDecoder, self).__init__()
-        self.linear = nn.Linear(hidden_size, dict_size)
+        self.linear = nn.Linear(hidden_size, outdict_size)
         self.softmax = nn.functional.softmax
-        self.embed = embedding
+        if embedding is not None:
+            self.embed = embedding
+        else:
+            self.embed = nn.Embedding(outdict_size, embedding_size)
         self.hidden_size = hidden_size
         self.n_layers = n_layers
         self.residual = residual
+        self.outdict_size = outdict_size
         self.p = dropout_p
         if self.residual:
             self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
-                                hidden_size=self.hidden_size, num_layers=1,
-                                dropout=self.p) for i in range(self.n_layers)])
+                                              hidden_size=self.hidden_size, num_layers=1,
+                                              dropout=self.p) for i in range(self.n_layers)])
         else:
             self.GRU = nn.GRU(input_size=embedding_size,
                               hidden_size=self.hidden_size, num_layers=self.n_layers,
@@ -338,9 +343,13 @@ class GRUDecoder(nn.Module):
 class GRUEncoder(nn.Module):
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
                  n_layers=2, dropout_p=0.2, kernel_size=1, use_cuda=False,
-                 bidirectional=False, residual=False):
+                 bidirectional=False, residual=False, n_words=10000):
         super(GRUEncoder, self).__init__()
-        self.embed = embedding
+        if embedding is not None:
+            self.embed = embedding
+        else:
+            self.embed = nn.Embedding(n_words, embedding_size)
+
         self.hidden_size = hidden_size
         self.n_layers = n_layers
         self.hidden_dims = [hidden_size] * n_layers 
@@ -356,7 +365,9 @@ class GRUEncoder(nn.Module):
                                               bidirectional=bidirectional) \
                                            for i in range(self.n_layers)])
         else:
-            self.GRU = nn.GRU(input_size=embedding_size, hidden_size=self.hidden_size, num_layers=self.n_layers, dropout=self.p, bidirectional=bidirectional)
+            self.GRU = nn.GRU(input_size=embedding_size, hidden_size=self.hidden_size,
+                              num_layers=self.n_layers, dropout=self.p,
+                              bidirectional=bidirectional)
         self.bidirectional = bidirectional
         
     def forward(self, x):
@@ -380,7 +391,9 @@ class GRUEncoder(nn.Module):
                     x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
 
                 h_ts.append(h_t)
-                x = x + prev
+                if not self.bidirection or l > 0:
+                    x = x + prev
+                
             h_t = torch.cat(h_ts, dim=0)
         else:
             x, h_t = self.GRU(x, h_0)        

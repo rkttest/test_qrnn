@@ -29,7 +29,7 @@ def xavier_init(model):
 
     print("--------total----------")
     print(count)
-    
+
         
 class EncoderDecoder(nn.Module):
     def __init__(self, embedding_size=128, hidden_size=256,
@@ -91,7 +91,12 @@ class EncoderDecoder(nn.Module):
                                                              mask=mask)
             if self.target_dist is not None:
                 decoder_out.data -= self.target_dist
+                #print(self.target_dist[0,0,100:120])
+                #print(decoder_out.data[0, 0, 43:50])
+
             topv, topi = decoder_out.data.topk(1)
+            #print(topv[0,0], topi[0,0], topi.size())
+
             attention_out.append(attention)
             
             if target is None:
@@ -186,7 +191,8 @@ class GRUEncoderDecoder(EncoderDecoder):
     def __init__(self, embedding_size=128, hidden_size=256,
                  n_layers=2, dropout_p=0.2, n_words=10000, max_word_len=50,
                  tokens=dict({"PAD":0, "SOS":1, "EOS":2, "UNK":3}),
-                 use_cuda=False, attention=True, bidirectional=False, residual=False, target_dist=None):
+                 use_cuda=False, attention=True, bidirectional=False, residual=False,
+                 target_dist=None, outdict_size=10000):
         super(GRUEncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
@@ -195,14 +201,15 @@ class GRUEncoderDecoder(EncoderDecoder):
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size, n_layers=n_layers,
                                   use_cuda=use_cuda, bidirectional=bidirectional,
-                                  residual=residual)
+                                  residual=residual, n_words=n_words)
         self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size,
                                   n_layers=n_layers,
                                    use_cuda=use_cuda,
-                                  attention=attention, bidirectional=bidirectional,
-                                  residual=residual)
+                                  attention=attention,
+                                  residual=residual,
+                                  outdict_size=outdict_size)
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention
@@ -331,15 +338,16 @@ class Trainer(object):
             if self.target_dist is not None:
                 target_dist = self.target_dist.type(type(probs.data))
                 topk, topi = (probs.data - target_dist).topk(3)
+                
             else:
                 topk, topi = probs.data.topk(3)
             loss, size = self.get_loss(model_out, target[:,1:])
             losses.append(loss.data[0] / size)
 
             if (self.dictionary is not None) and (idx == 0):
-                model_seq = topi.cpu().numpy()[:10,:,0]
-                in_seq = x.data.cpu().numpy()[:10]
-                target_seq = target.data.cpu().numpy()[:10]
+                model_seq = topi.cpu().numpy()[:15,:,0]
+                in_seq = x.data.cpu().numpy()[:15]
+                target_seq = target.data.cpu().numpy()[:15]
                 batchsize = model_seq.shape[0]
                 
                 for batch in range(batchsize):
@@ -373,6 +381,7 @@ class Trainer(object):
             if target_dist is not None:
                 target_dist = target_dist.type(type(probs.data))
                 topk, topi = (probs.data - target_dist).topk(3)
+                
             else:
                 topk, topi = probs.data.topk(3)
             
@@ -469,7 +478,7 @@ class CycleLR(_LRScheduler):
         lr = c - 2 * max(0, c - self.max_lr)
 
         if (step + 1) == self.cycle_step:
-            self.max_lr *= 0.9
-            self.max_lr = max(self.max_lr, base_lr+1e-5)
+            self.max_lr *= 0.95
+            self.max_lr = max(self.max_lr, base_lr+5e-5)
         return lr
 
