@@ -255,7 +255,7 @@ class GRUDecoder(nn.Module):
 
     def __init__(self, dict_size=60, hidden_size=64, embedding=None, embedding_size=64,
                  n_layers=2, dropout_p=0.2,  use_cuda=False,
-                 attention=True, residual=True, bidirectional=False
+                 attention=True, residual=True, bidirectional=False,
                  outdict_size=10000):
 
         super(GRUDecoder, self).__init__()
@@ -273,7 +273,7 @@ class GRUDecoder(nn.Module):
         if self.residual:
             self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
                                               hidden_size=self.hidden_size, num_layers=1,
-                                              dropout=self.p) for i in range(self.n_layers)])
+                                              dropout=self.p) for i in range(self.n_layers+1)])
         else:
             self.GRU = nn.GRU(input_size=embedding_size,
                               hidden_size=self.hidden_size, num_layers=self.n_layers,
@@ -287,27 +287,35 @@ class GRUDecoder(nn.Module):
             self.attn_linear = nn.Linear(hidden_size*2 + hidden_size*bidirectional_scale,
                                          hidden_size)
             
-    def forward(self, x, encoder_c, encoder_out=None, mask=None):
+    def forward(self, x, encoder_c, encoder_out=None, mask=None, initial=False):
         # M word から 次の 1 word の（条件付き)確率分布を生成する
 
         # x :1文字の入力ベクトル : 1 * B 
         # x : B -> 1 * B * E
         self.batch_size = x.size()[0]
-        h_0 = encoder_c
-
         x = self.embed(x)
-
-        # add dropout
         x = dropout(x, p=self.p, training=True)
 
-
+        #encoder_c は最初は encoderの出力の -1 + randominit
+        #その後はdecoderの時刻tの出力
+        h_0 = encoder_c       
+        x, h_t = self.GRUs[0](x, h_0[0].unsqueeze(0))
+            
         # x : 1 * B * E
         # h_0, c_0 : nlayer * B * H
         if self.residual:
-            h_ts = []
-            for l in range(self.n_layers):
+            h_ts = [h_t]
+            init = 1
+            for l in range(init, self.n_layers+init):
+                #各GRUの出力に対しattentionを足す+residual block
+                # x のスケールが多少気になる(残差が +-1に収まってしまっている)
                 prev = x
                 x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
+                attn = self.attention(encoder_out, x, mask)
+                encoder_attn = torch.bmm(attn,
+                                        encoder_out.transpose(0, 1)).transpose(0, 1)
+                x_cat = torch.cat([encoder_attn, x], dim=2)
+                x = nn.functional.tanh(self.attn_linear(x_cat))
                 h_ts.append(h_t)
                 x = x + prev
             h_t = torch.cat(h_ts, dim=0)
@@ -358,17 +366,32 @@ class GRUEncoder(nn.Module):
         self.residual = residual
         if self.use_cuda:torch.cuda.manual_seed_all(1)
         self.p = dropout_p
+        self.bidirectional = bidirectional        
         if self.residual:
-            self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
-                                              hidden_size=self.hidden_size, num_layers=1,
-                                              dropout=self.p,
-                                              bidirectional=bidirectional) \
+            if bidirectional:
+                modules = [nn.GRU(input_size=embedding_size,
+                                 hidden_size=self.hidden_size,num_layers=1,
+                                 dropout=self.p,
+                                  bidirectional=True),
+                           nn.GRU(input_size=self.hidden_size*2,
+                                  hidden_size=self.hidden_size,num_layers=1,
+                                  dropout=self.p)] + \
+                                  [nn.GRU(input_size=self.hidden_size,
+                                         hidden_size=self.hidden_size, num_layers=1,
+                                         dropout=self.p) \
+                                  for i in range(self.n_layers)]                           
+                self.GRUs = nn.ModuleList(modules)
+            else:
+                self.GRUs = nn.ModuleList([nn.GRU(input_size=embedding_size,
+                                                  hidden_size=self.hidden_size, num_layers=1,
+                                                  dropout=self.p,
+                                                  bidirectional=bidirectional) \
                                            for i in range(self.n_layers)])
+                
         else:
             self.GRU = nn.GRU(input_size=embedding_size, hidden_size=self.hidden_size,
                               num_layers=self.n_layers, dropout=self.p,
                               bidirectional=bidirectional)
-        self.bidirectional = bidirectional
         
     def forward(self, x):
         # x : 入力ワードベクトル, : B * N (B : Batch, N : InputWordLength)
@@ -381,29 +404,32 @@ class GRUEncoder(nn.Module):
 
         # add dropout
         x = dropout(x, p=self.p)
+        if self.bidirectional:
+            #1層目:biRNN hidden->2*hidden
+            #2層目:2*hidden->hidden
+            x, h_t = self.GRUs[0](x, h_0[:2])
+            x, h_t = self.GRUs[1](x, h_0[-1].unsqueeze(0))
+            
         if self.residual:
             h_ts = []
-            for l in range(self.n_layers):
+            init = 2 if self.bidirectional else 0
+            for l in range(init, self.n_layers + init):
+                # residual block
                 prev = x
-                if self.bidirectional:
-                    x, h_t = self.GRUs[l](x, h_0)
-                else:
-                    x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
-
-                h_ts.append(h_t)
-                if not self.bidirection or l > 0:
-                    x = x + prev
-                
-            h_t = torch.cat(h_ts, dim=0)
+                x, h_t = self.GRUs[l](x, h_0[l].unsqueeze(0))
+                #h_ts.append(h_t)
+                x = x + prev  
+            #h_t = torch.cat(h_ts, dim=0)
         else:
             x, h_t = self.GRU(x, h_0)        
 
+        # h_t : Encoder最後の出力の時刻 t 
         return x, h_t
     
     def init_hidden(self):
         bidirection = 2 if self.bidirectional else 1
         h_0 = torch.FloatTensor(self.n_layers*bidirection, self.batch_size, self.hidden_size)
-        h_0.zero_() #uniform_(-0.001, 0.001)
+        h_0.uniform_(-0.0001, 0.0001)
         if self.use_cuda:
             h_0 = h_0.cuda()
         return Variable(h_0)

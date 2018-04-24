@@ -39,10 +39,11 @@ class EncoderDecoder(nn.Module):
         super(EncoderDecoder, self).__init__()
         self.embedding = nn.Embedding(n_words, embedding_size,
                                       padding_idx=None)
-
+        self.n_layers = n_layers
         self.encoder = Encoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
-                               hidden_size=hidden_size, n_layers=n_layers, use_cuda=use_cuda)
+                               hidden_size=hidden_size, n_layers=n_layers-1,
+                               use_cuda=use_cuda)
         self.decoder = Decoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,                               
                                hidden_size=hidden_size,
@@ -53,19 +54,20 @@ class EncoderDecoder(nn.Module):
         self.use_attention = attention
         self.bidirectional = bidirectional
         self.target_dist = target_dist
+        self.multihead_attention = False
         
     def forward(self, x, target=None, getattention=False):
         batch_size = x.size()[0]
         encoder_out, encoder_c = self.encoder(x)
-        decoder_c = encoder_c
+        
+        init_h = self.encoder.init_hidden()
+        init_h = init_h[:self.n_layers]
+        decoder_c = torch.cat([encoder_c[-1].unsqueeze(0), init_h])
         if target is None:
             decoder_input = Variable(torch.LongTensor([[self.tokens["SOS"]]*batch_size]))
         else:
             decoder_input = target[:,0].unsqueeze(0)
 
-        if self.bidirectional:
-            size = encoder_c.size()
-            encoder_c = encoder_c.view(2, size[0]//2, size[1], size[2]).sum(dim=1)
         if type(decoder_c) == tuple:
             decoder_c = list(encoder_c)
             decoder_c[1] = Variable(torch.zeros(encoder_c[1].size()))
@@ -85,18 +87,13 @@ class EncoderDecoder(nn.Module):
             if pad_eos_num >= batch_size:
                 break
 
-            #print(decoder_input.data[0, 0], di, target is None, decoder_input.size())
             decoder_out, decoder_c, attention = self.decoder(decoder_input, decoder_c,
                                                              encoder_out=encoder_out,
                                                              mask=mask)
             if self.target_dist is not None:
                 decoder_out.data -= self.target_dist
-                #print(self.target_dist[0,0,100:120])
-                #print(decoder_out.data[0, 0, 43:50])
 
             topv, topi = decoder_out.data.topk(1)
-            #print(topv[0,0], topi[0,0], topi.size())
-
             attention_out.append(attention)
             
             if target is None:
@@ -194,14 +191,15 @@ class GRUEncoderDecoder(EncoderDecoder):
                  use_cuda=False, attention=True, bidirectional=False, residual=False,
                  target_dist=None, outdict_size=10000):
         super(GRUEncoderDecoder, self).__init__()
-        self.embedding = nn.Embedding(n_words, embedding_size,
-                                      padding_idx=None)
-        
+        #self.embedding = nn.Embedding(n_words, embedding_size,
+        #                              padding_idx=None)
+        self.embedding = None
+        self.n_layers = n_layers        
         self.encoder = GRUEncoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size, n_layers=n_layers,
                                   use_cuda=use_cuda, bidirectional=bidirectional,
-                                  residual=residual, n_words=n_words)
+                                  residual=residual, n_words=n_words, dropout_p=dropout_p)
         self.decoder = GRUDecoder(dict_size=n_words, embedding=self.embedding,
                                embedding_size=embedding_size,
                                    hidden_size=hidden_size,
@@ -209,7 +207,7 @@ class GRUEncoderDecoder(EncoderDecoder):
                                    use_cuda=use_cuda,
                                   attention=attention,
                                   residual=residual,
-                                  outdict_size=outdict_size)
+                                  outdict_size=outdict_size, dropout_p=dropout_p)
         self.max_word_len = max_word_len
         self.tokens = tokens
         self.use_attention = attention

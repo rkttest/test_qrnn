@@ -16,20 +16,33 @@ from tensorboardX import SummaryWriter
 from hyperparam import HP
 
 from wordsdictionary import simpleWordDict, ssWordDict
-
+INDEX=""
 def main():
+    wd = ssWordDict("../../Dictionary/newdata/WordDict.csv",
+                    "../../Dictionary/newdata/TypeDict.csv")
+    #wd = simpleWordDict("../../Dictionary/datum/reshape_merged_dict.csv")
+
+    target_dist = np.load("../../Dictionary/newdata/{}target_dist.npy".format(INDEX))
+    target_dist = np.r_[target_dist, np.zeros(HP.outdict_size - target_dist.shape[0])]
+    target_dist = np.log(target_dist + 1e-8)
+    
+    target_dist = torch.from_numpy(target_dist)
+    target_dist = target_dist.type(torch.FloatTensor).unsqueeze(0).unsqueeze(0)
+    if HP.USE_CUDA: target_dist = target_dist.cuda()
+    
     s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
+                                  outdict_size=HP.outdict_size,
                                n_layers=HP.n_layers,
                                dropout_p=HP.dropout_p,
                                n_words=HP.n_words,
                                max_word_len=HP.max_word_len,
                                tokens=HP.tokens,
-                               use_cuda=HP.USE_CUDA)
+                               use_cuda=HP.USE_CUDA,
+                                attention=HP.use_attention, bidirectional=True,
+                                   residual=True, target_dist=target_dist)
 
-    wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
-    #wd = simpleWordDict("../../Dictionary/datum/reshape_merged_dict.csv")
-
+    
     lossfn = nn.CrossEntropyLoss()
     optimizer = Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, amsgrad=True, weight_decay=HP.l2)
@@ -43,12 +56,21 @@ def main():
     # target_dist = torch.from_numpy(target_dist).type(torch.DoubleTensor)
     
     # test_arr = np.load("../json/train.npy")
-    with open("../../Dictionary/filteredlist.pkl", "rb") as f:
+    with open("../../Dictionary/newdata/filteredlist.pkl", "rb") as f:
         import pickle
         textdata = pickle.load(f)
-    test_data = textdata[(len(textdata)//10)*8:]
-    test_data = test_data[1000:1500]
-
+    test_data = textdata[:(len(textdata)//10)*9]
+    test_data = test_data[4000:4500]
+    checks = [
+        "おはよう!",
+        "お話ししようよ",
+        "今日は暑いね",
+        "調子はどう?"
+    ]
+    checks = list(map(lambda x:(wd.sentence2indexlist(x) + [2], [1]), checks))
+    test_data += checks
+    test_data = sorted(test_data, key=lambda x:len(x[0]))
+    
     # test_arr = test_arr.reshape(-1, 2, test_arr.shape[1])[:400,:,:HP.max_word_len]
     # test_arr[:,0,:] = test_arr[:,0,::-1]
     # test_arr = torch.from_numpy(test_arr)
@@ -63,12 +85,7 @@ def main():
                       epoch=HP.epoch,
                       save_dir="SavedModel/11", save_freq=HP.save_freq)
 
-<<<<<<< HEAD
-    model_path = "SavedModel/15/epoch9_batchidx2000"
-=======
-    model_path = "SavedModel/16/epoch18_batchidx4000"
->>>>>>> 2791616744e98b1fad37439e89b4a3c92c31838b
-
+    model_path = "SavedModel/34/epoch16_batchidx4000"
     trainer.model_initialize(model_path)
     test_out = trainer.test()#target_dist)
 

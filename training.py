@@ -25,13 +25,13 @@ from wordsdictionary import simpleWordDict, ssWordDict
 
 import random
 random.seed(1)
-
+INDEX=""
 def main():
-    wd = ssWordDict("../../Dictionary/newdata/WordDict.csv",
-                   "../../Dictionary/newdata/TypeDict.csv")
+    wd = ssWordDict("../../Dictionary/newdata/{}WordDict.csv".format(INDEX),
+                    "../../Dictionary/newdata/{}TypeDict.csv".format(INDEX))
     #wd = WordDict()
     #wd.load_dict(pd.read_csv("../json/w2i.csv"))
-    target_dist = np.load("../../Dictionary/newdata/target_dist.npy")
+    target_dist = np.load("../../Dictionary/newdata/{}target_dist.npy".format(INDEX))
     target_dist = np.r_[target_dist, np.zeros(HP.outdict_size - target_dist.shape[0])]
     target_dist = np.log(target_dist + 1e-8)
     
@@ -71,7 +71,7 @@ def main():
     
     optimizer = torch.optim.Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, weight_decay=HP.l2)
-    scheduler = CycleLR(optimizer, max_lr=0.001, cycle_step=4000) 
+    scheduler = CycleLR(optimizer, max_lr=0.002, cycle_step=4000) 
     #scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.4)
 
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
@@ -96,22 +96,22 @@ def main():
     print("Model", s2s_model)
 
     #weight = torch.FloatTensor(np.load("../json/weight.npy"))
-    with open("../../Dictionary/newdata/filteredlist.pkl", "rb") as f:
+    with open("../../Dictionary/newdata/{}filteredlist_ag.pkl".format(INDEX), "rb") as f:
         #with open("../json/textlist.pkl", "rb") as f:        
         import pickle
         textdata = pickle.load(f)
 
     train_data = textdata[:(len(textdata)//10)*9]
     random.shuffle(train_data)
-    train_data = sorted(train_data, key=len)
+    train_data = sorted(train_data, key=lambda x:len(x[0]))
     #sampling_weight = np.load("../../Dictionary/newdata/sampling_weight.npy")
     sampling_weight = np.ones(len(train_data))
     sampling_weight = sampling_weight[:(len(textdata)//10)*8]
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*9:]
     random.shuffle(val_data)
-    val_data = val_data[:2000]
-    val_data = sorted(val_data, key=len)
+    val_data = val_data[:4000]
+    val_data = sorted(val_data, key=lambda x:len(x[0]))
 
     #np.random.shuffle(train_data)
 
@@ -130,11 +130,11 @@ def main():
                       beam_search=False, getattention=True)
 
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
-
+    trainer.model_initialize("SavedModel/34/epoch0_batchidx4000")
+    
     writer = SummaryWriter()
-    trainer.model_initialize()#"SavedModel/30/epoch3_batchidx4000")
     trainer.train(writer)
-    #trainer.train()
+    trainer.train()
     
 
 class RandomBatchSampler(Sampler):
@@ -159,9 +159,9 @@ def collate_fn(sample):
 
     max_src_len = max([len(s) for s in src])
     max_tar_len = max([len(s) for s in tar])
-    min_src_len = min([len(s) for s in src])
-    min_tar_len = min([len(s) for s in tar])
-    print("src", max_src_len, min_src_len)
+    #min_src_len = min([len(s) for s in src])
+    #min_tar_len = min([len(s) for s in tar])
+    #print("src", max_src_len, min_src_len)
     
     
     # src = [s[0] if s[1][0] == SOS else [s[1][0]] + s[0] for s in sample]
@@ -169,12 +169,12 @@ def collate_fn(sample):
 
     # max_src_len = max([len(s) for s in src])
     # max_tar_len = max([len(s) for s in tar])
-    # src = [s + [PAD] * (max_src_len - len(s)) for s in src]
-    # tar = [s + [PAD] * (max_tar_len - len(s)) for s in tar]
+    src = [s + [PAD] * (max_src_len - len(s)) for s in src]
+    tar = [s + [PAD] * (max_tar_len - len(s)) for s in tar]
 
-    # src = [s[::-1] for s in src]
-    # src = torch.from_numpy(np.array(src))
-    # tar = torch.from_numpy(np.array(tar))
+    src = [s[::-1] for s in src]
+    src = torch.from_numpy(np.array(src))
+    tar = torch.from_numpy(np.array(tar))
     use_cuda = HP.USE_CUDA
     
     if use_cuda:

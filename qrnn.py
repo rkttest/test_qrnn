@@ -79,7 +79,7 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.softmax = nn.functional.softmax
         self.type = attn_type
-        bidirectional_scale = 2 if bidirectional else 1        
+        bidirectional_scale = 1 #2 if bidirectional else 1        
         if self.type == "Bahdanau":
             self.enc_linear = nn.Linear(hidden_size*bidirectional_scale, hidden_size)
             self.dec_linear = nn.Linear(hidden_size, hidden_size)
