@@ -53,10 +53,9 @@ class EncoderDecoder(nn.Module):
         self.tokens = tokens
         self.use_attention = attention
         self.bidirectional = bidirectional
-        self.target_dist = target_dist
         self.multihead_attention = False
         
-    def forward(self, x, target=None, getattention=False):
+    def forward(self, x, target=None, getattention=False, target_dist=None):
         batch_size = x.size()[0]
         encoder_out, encoder_c = self.encoder(x)
         
@@ -90,7 +89,7 @@ class EncoderDecoder(nn.Module):
             decoder_out, decoder_c, attention = self.decoder(decoder_input, decoder_c,
                                                              encoder_out=encoder_out,
                                                              mask=mask)
-            if self.target_dist is not None:
+            if target_dist is not None and di < 3:
                 decoder_out.data -= self.target_dist
 
             topv, topi = decoder_out.data.topk(1)
@@ -270,7 +269,7 @@ class Trainer(object):
                 if type(self.scheduler) == CycleLR:
                     self.scheduler.step()
                 
-                if (idx+1) % 200 == 0:
+                if (idx+1) % 20 == 0:
                     print(idx+1)
                     print(np.mean(loss_list))
                 x = Variable(tensors[0])
@@ -328,17 +327,15 @@ class Trainer(object):
                 target = target.cuda()
 
             if self.getattention:
-                model_out, attention = self.model.forward(x, getattention=self.getattention)
+                model_out, attention = self.model.forward(x,
+                                                          getattention=self.getattention,
+                                                          target_dist=self.target_dist)
             else:
-                model_out = self.model.forward(x, getattention=self.getattention)
+                model_out = self.model.forward(x, getattention=self.getattention,
+                                               target_dist=self.target_dist)
                 attention = None
             probs = nn.functional.softmax(model_out, dim=2)
-            if self.target_dist is not None:
-                target_dist = self.target_dist.type(type(probs.data))
-                topk, topi = (probs.data - target_dist).topk(3)
-                
-            else:
-                topk, topi = probs.data.topk(3)
+            topk, topi = probs.data.topk(3)
             loss, size = self.get_loss(model_out, target[:,1:])
             losses.append(loss.data[0] / size)
 
@@ -374,14 +371,9 @@ class Trainer(object):
                 x = x.cuda()
                 target = target.cuda()
             
-            model_out = self.model.forward(x)
+            model_out = self.model.forward(x, target_dist=self.target_dist)
             probs = nn.functional.softmax(model_out, dim=2)
-            if target_dist is not None:
-                target_dist = target_dist.type(type(probs.data))
-                topk, topi = (probs.data - target_dist).topk(3)
-                
-            else:
-                topk, topi = probs.data.topk(3)
+            topk, topi = probs.data.topk(3)
             
             test_out.append([topi.cpu().numpy()[:,:,0], x.data.cpu().numpy(),
                             target.data.cpu().numpy()])

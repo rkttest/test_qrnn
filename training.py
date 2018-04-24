@@ -20,18 +20,19 @@ from tensorboardX import SummaryWriter
 from hyperparam import HP
 sys.path.append("../../src")
 sys.path.append("../json")
-from wordsdictionary import simpleWordDict, ssWordDict
-#from dictionary import WordDict
+#from wordsdictionary import simpleWordDict, ssWordDict
+from dictionary import WordDict
 
 import random
 random.seed(1)
 INDEX=""
 def main():
-    wd = ssWordDict("../../Dictionary/newdata/{}WordDict.csv".format(INDEX),
-                    "../../Dictionary/newdata/{}TypeDict.csv".format(INDEX))
-    #wd = WordDict()
-    #wd.load_dict(pd.read_csv("../json/w2i.csv"))
-    target_dist = np.load("../../Dictionary/newdata/{}target_dist.npy".format(INDEX))
+    # wd = ssWordDict("../../Dictionary/newdata/{}WordDict.csv".format(INDEX),
+    #"../../Dictionary/newdata/{}TypeDict.csv".format(INDEX))
+    wd = WordDict()
+    wd.load_dict(pd.read_csv("../json/w2i.csv"))
+    #target_dist = np.load("../../Dictionary/newdata/{}target_dist.npy".format(INDEX))
+    target_dist = np.load("../json/target_dist.npy")    
     target_dist = np.r_[target_dist, np.zeros(HP.outdict_size - target_dist.shape[0])]
     target_dist = np.log(target_dist + 1e-8)
     
@@ -49,7 +50,7 @@ def main():
                                tokens=HP.tokens,
                                use_cuda=HP.USE_CUDA,
                                 attention=HP.use_attention, bidirectional=True,
-                                   residual=True, target_dist=target_dist)
+                                   residual=True, target_dist=None)#, target_dist)
 
 
     # wd = ssWordDict("../../Dictionary/WordDict.csv", "../../Dictionary/TypeDict.csv")
@@ -71,7 +72,7 @@ def main():
     
     optimizer = torch.optim.Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, weight_decay=HP.l2)
-    scheduler = CycleLR(optimizer, max_lr=0.002, cycle_step=4000) 
+    scheduler = CycleLR(optimizer, max_lr=0.002, cycle_step=1000) 
     #scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.4)
 
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
@@ -96,8 +97,8 @@ def main():
     print("Model", s2s_model)
 
     #weight = torch.FloatTensor(np.load("../json/weight.npy"))
-    with open("../../Dictionary/newdata/{}filteredlist_ag.pkl".format(INDEX), "rb") as f:
-        #with open("../json/textlist.pkl", "rb") as f:        
+    #with open("../../Dictionary/newdata/{}filteredlist_ag.pkl".format(INDEX), "rb") as f:
+    with open("../json/textlist.pkl", "rb") as f:        
         import pickle
         textdata = pickle.load(f)
 
@@ -110,7 +111,7 @@ def main():
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*9:]
     random.shuffle(val_data)
-    val_data = val_data[:4000]
+    val_data = val_data[:1000]
     val_data = sorted(val_data, key=lambda x:len(x[0]))
 
     #np.random.shuffle(train_data)
@@ -127,14 +128,14 @@ def main():
                       trainloader=trainloader, epoch=HP.epoch,
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq,
                       dictionary=wd, teacher_forcing_ratio=0.2, scheduler=scheduler,
-                      beam_search=False, getattention=True)
+                      beam_search=False, getattention=True, target_dist=target_dist)
 
-    shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))    
-    trainer.model_initialize("SavedModel/34/epoch0_batchidx4000")
+    shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))
+    trainer.model_initialize()#"SavedModel/34/epoch0_batchidx4000")
     
     writer = SummaryWriter()
     trainer.train(writer)
-    trainer.train()
+    #trainer.train()
     
 
 class RandomBatchSampler(Sampler):
