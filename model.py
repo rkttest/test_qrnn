@@ -220,7 +220,7 @@ class Trainer(object):
                  valloader=None, testloader=None, save_dir="./", clip_norm=4.,
                  teacher_forcing_ratio=0.5, epoch=10, save_freq=1000,
                  dictionary=None, target_dist=None, scheduler=None, 
-                 getattention=False, beam_search=False, use_mixer=False):
+                 getattention=False, beam_search=False, use_mixer=False, idf=None):
 
         self.model = model
         self.optim = optimizer
@@ -242,6 +242,8 @@ class Trainer(object):
         self.getattention = getattention
         self.use_mixer = use_mixer
         self.rl_alpha = 10
+        self.idf = idf
+        self.score_list = [0 for _ in range(1000)]
         np.random.seed(1)
         torch.manual_seed(1)
         if self.model.use_cuda:
@@ -386,12 +388,31 @@ class Trainer(object):
         torch.nn.utils.clip_grad_norm(self.model.parameters(), self.clip_norm)        
         self.optim.step()
 
+    def ReinforceLoss(self, predict, target, probs):
+        # predict : B
+        # target : B*M
+        # probs : B*D
+        batch = Variable(torch.from_numpy(np.arange(probs.size()[0], dtype=int)),
+                         requires_grad=False)
+        predict = Variable(predict, requires_grad=False)
+        score = self.tfidf_score(predict.unsqueeze(1), target).detach()
+        loss = -torch.log(probs[batch, predict]) * (score - np.mean(self.score_list))
+        loss = loss.mean() * 10
+        self.score_list.append(float(score[int(np.random.choice(score.size()[0], 1))]))
+        self.score_list = self.score_list[1:]
+        #print(loss.data[0])
+
+        return loss
+    
     def get_loss(self, predict, target):
         length = min(predict.size()[1], target.size()[1])
         loss = 0
+        probs = nn.functional.softmax(predict, dim=1)
+        _, topi = probs.data.topk(1)
+        topi = topi[:,:,0]
         for di in range(length):
             loss += self.lossfn(predict[:,di], target[:,di])
-
+            loss += self.ReinforceLoss(topi[:,di], target, probs[:,di])
 
         if self.use_mixer:
             probs = nn.functional.softmax(predict, dim=1)            
@@ -415,8 +436,19 @@ class Trainer(object):
         return perplexity.data[0]
     
     def save_model(self, save_path):
+        print(save_path)
         torch.save(self.model.state_dict(), save_path)
 
+    def tfidf_score(self, predict, target):
+        # predict B * 1 (variable)
+        # target B * M
+        count = torch.eq(target, predict).sum(dim=1).type(torch.FloatTensor)
+        length = torch.gt(target, 0).sum(dim=1).type(torch.FloatTensor)
+        tf = count / length
+        idf = self.idf[predict[:,0]]
+        score = tf * idf
+        return score        
+        
     @staticmethod
     def bleu(model_pred, target, N=4):
         """

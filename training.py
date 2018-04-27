@@ -38,7 +38,8 @@ def main():
     
     target_dist = torch.from_numpy(target_dist)
     target_dist = target_dist.type(torch.FloatTensor).unsqueeze(0).unsqueeze(0)
-
+    target_dist = None
+    
     if HP.USE_CUDA: target_dist = target_dist.cuda()
     s2s_model = GRUEncoderDecoder(embedding_size=HP.embedding_size,
                                hidden_size=HP.hidden_size,
@@ -72,7 +73,7 @@ def main():
     
     optimizer = torch.optim.Adam(s2s_model.parameters(),
                      lr=HP.learning_rate, weight_decay=HP.l2)
-    scheduler = CycleLR(optimizer, max_lr=0.002, cycle_step=1000) 
+    scheduler = CycleLR(optimizer, max_lr=0.1, cycle_step=1000) 
     #scheduler = MultiStepLR(optimizer, milestones=[10,  20], gamma=0.4)
 
     # train_arr = np.load("../../TrainData/corpus_train_merged.npy")
@@ -103,6 +104,19 @@ def main():
         textdata = pickle.load(f)
 
     train_data = textdata[:(len(textdata)//10)*9]
+
+    def get_idf(data, dictsize=1000):
+        outarr = torch.zeros(dictsize)
+        for i in range(dictsize):
+            count = len([d for d in data if i in d])
+            outarr[i] = count
+
+        idf = len(data) / (1 + outarr)
+        return Variable(torch.log(idf), requires_grad=False)
+
+    idf = get_idf([data[1] for data in train_data],
+                  dictsize=HP.n_words)
+    
     random.shuffle(train_data)
     train_data = sorted(train_data, key=lambda x:len(x[0]))
     #sampling_weight = np.load("../../Dictionary/newdata/sampling_weight.npy")
@@ -111,7 +125,7 @@ def main():
     sampling_weight = sampling_weight / sampling_weight.sum()
     val_data = textdata[(len(textdata)//10)*9:]
     random.shuffle(val_data)
-    val_data = val_data[:1000]
+    val_data = val_data[1000:1500]
     val_data = sorted(val_data, key=lambda x:len(x[0]))
 
     #np.random.shuffle(train_data)
@@ -128,7 +142,7 @@ def main():
                       trainloader=trainloader, epoch=HP.epoch,
                       valloader=valloader, save_dir=HP.save_dir, save_freq=HP.save_freq,
                       dictionary=wd, teacher_forcing_ratio=0.2, scheduler=scheduler,
-                      beam_search=False, getattention=True, target_dist=target_dist)
+                      beam_search=False, getattention=True, target_dist=target_dist, idf=idf)
 
     shutil.copy("hyperparam.py", os.path.join(HP.save_dir, "hyperparam.py"))
     trainer.model_initialize()#"SavedModel/34/epoch0_batchidx4000")

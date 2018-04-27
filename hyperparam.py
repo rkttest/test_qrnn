@@ -23,5 +23,5 @@ HP.l2 = 2e-6
 HP.batch_size = 300
 HP.epoch = 300
 HP.save_freq = 40
-HP.save_dir = "SavedModel/35"
+HP.save_dir = "SavedModel/36"
 HP.use_attention = True
